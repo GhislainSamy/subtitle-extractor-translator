@@ -238,7 +238,7 @@ Toutes clés bloquées
 ### Lancer les 2 agents en parallèle
 
 ```bash
-git clone https://github.com/GhislainSamy/AI-AutoSubtitleTranslator.git
+git clone https://github.com/GhislainSamy/subtitle-extractor-translator.git
 # Terminal 1 - Extractor
 cd extractor/
 docker build -t subtitle-extractor .
