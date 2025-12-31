@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  subtitle-extractor:
+    images: subtitle-extractor:latest
+    container_name: subtitle-extractor
+    restart: unless-stopped
+    volumes:
+      # Adapter le chemin vers vos medias
+      - /mnt/nas/media/films:/data
+    environment:
+      # Mode agent (true) ou exécution unique (false)
+      - WATCH_MODE=true
+      
+      # Intervalle de vérification en secondes
+      # 3600 = 1 heure
+      # 21600 = 6 heures
+      # 86400 = 24 heures
+      - WATCH_INTERVAL=10
+      
+      # Dossier source (monté dans le container)
+      - SOURCE_FOLDER=/data

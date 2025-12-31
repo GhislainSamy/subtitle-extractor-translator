@@ -1,0 +1,4 @@
+python-dotenv==1.0.0
+pysrt==1.1.2
+google-genai==1.0.0
+pytz==2024.1

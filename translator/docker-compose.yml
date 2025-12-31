@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  subtitle-translator:
+    image: subtitle-translator:latest
+    container_name: subtitle-translator
+    restart: unless-stopped
+    volumes:
+      # Adapter le chemin vers vos medias
+      - /mnt/nas/media/films:/data
+    environment:
+      # Mode agent (true) ou exécution unique (false)
+      - WATCH_MODE=true
+      
+      # Intervalle de vérification en secondes
+      # 3600 = 1 heure
+      # 21600 = 6 heures
+      # 86400 = 24 heures
+      - WATCH_INTERVAL=3600
+      
+      # Dossier source (monté dans le container)
+      - SOURCE_FOLDER=/data
+      
+      # Configuration traduction
+      - PAUSE_SECONDS=30
+      - BATCH_SIZE=10
+      - COOLDOWN_SECONDS=3600
+      
+      # Clés API Gemini (JSON array)
+      - GEMINI_API_KEYS=["cle1","cle2"]
+      
+      # Modèles Gemini (JSON array)
+      - GEMINI_MODELS=["gemini-3-flash-preview","gemini-2.5-flash","gemini-3-pro-preview"]
