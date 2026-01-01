@@ -130,13 +130,13 @@ def find_external_subtitle(base_path):
 def find_extracted_subtitle(base_path):
     """
     Cherche un fichier .en.XXX.txt déjà extrait
-    Retourne True si trouvé, False sinon
+    Retourne le chemin du fichier trouvé ou None
     """
     for ext in SUBTITLE_EXTENSIONS:
         extracted_file = f"{base_path}.en.{ext}.txt"
         if os.path.isfile(extracted_file):
-            return True
-    return False
+            return extracted_file
+    return None
 
 
 def get_tracks(mkv_path):
@@ -355,24 +355,29 @@ def run_extraction():
             
             video_path = os.path.join(root, file)
             
-            result = process_video_file(video_path)
-            
-            if result == "french_external":
-                stats["french_external"] += 1
-            elif result == "french_in_mkv":
-                stats["french_in_mkv"] += 1
-            elif result == "external":
-                stats["external_found"] += 1
-            elif result == "extracted":
-                stats["already_extracted"] += 1
-            elif result == "mkv_extracted":
-                stats["mkv_extracted"] += 1
-            elif result == "failed":
+            try:
+                result = process_video_file(video_path)
+                
+                if result == "french_external":
+                    stats["french_external"] += 1
+                elif result == "french_in_mkv":
+                    stats["french_in_mkv"] += 1
+                elif result == "external":
+                    stats["external_found"] += 1
+                elif result == "extracted":
+                    stats["already_extracted"] += 1
+                elif result == "mkv_extracted":
+                    stats["mkv_extracted"] += 1
+                elif result == "failed":
+                    stats["failed"] += 1
+                elif result == "no_source":
+                    stats["no_source"] += 1
+                
+                stats["total"] += 1
+            except Exception as e:
+                log(f"❌ {file} | Erreur inattendue: {e}")
                 stats["failed"] += 1
-            elif result == "no_source":
-                stats["no_source"] += 1
-            
-            stats["total"] += 1
+                stats["total"] += 1
     
     # Stats compactes
     french_total = stats["french_external"] + stats["french_in_mkv"]
