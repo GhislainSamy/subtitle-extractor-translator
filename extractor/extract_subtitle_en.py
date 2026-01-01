@@ -387,8 +387,8 @@ def run_extraction():
         log(f"  ❌ Extraction échouée : {stats['failed']}")
     if stats["no_source"] > 0:
         log(f"  ⚠️ Aucune source trouvée : {stats['no_source']}")
-    if stats["trailers_skipped"] > 0:
-        log(f"  🚫 Trailers ignorés : {stats['trailers_skipped']}")
+  #  if stats["trailers_skipped"] > 0:
+  #      log(f"  🚫 Trailers ignorés : {stats['trailers_skipped']}")
     log('='*60)
 
 
