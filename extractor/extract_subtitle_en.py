@@ -350,7 +350,6 @@ def run_extraction():
             # Ignorer les trailers
             if is_trailer(file):
                 stats["trailers_skipped"] += 1
-                log(f"⏭️ {file} | Trailer ignoré")
                 continue
             
             video_path = os.path.join(root, file)
