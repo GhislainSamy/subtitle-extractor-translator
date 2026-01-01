@@ -18,6 +18,9 @@ load_dotenv()
 SOURCE_FOLDER = os.getenv("SOURCE_FOLDER")
 WATCH_MODE = os.getenv("WATCH_MODE", "true").lower() == "true"
 WATCH_INTERVAL = int(os.getenv("WATCH_INTERVAL", 3600))  # défaut: 1h
+LOG_FILE = os.getenv("LOG_FILE", None)  # None = console uniquement
+LOG_FILE_MAX_SIZE_MB = int(os.getenv("LOG_FILE_MAX_SIZE_MB", 10))  # Taille max par fichier (MB)
+LOG_FILE_BACKUP_COUNT = int(os.getenv("LOG_FILE_BACKUP_COUNT", 2))  # Nombre de backups
 
 # Extensions vidéo supportées
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".flv", ".wmv")
@@ -25,11 +28,54 @@ VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".flv", ".w
 # Extensions de sous-titres à chercher
 SUBTITLE_EXTENSIONS = ["srt", "ass", "sup", "ssa"]
 
+# Configuration du logger
+import logging
+from logging.handlers import RotatingFileHandler
+
+logger = None
+
+def setup_logger():
+    """Configure le logger avec rotation automatique si LOG_FILE est défini"""
+    global logger
+    
+    logger = logging.getLogger('subtitle_extractor')
+    logger.setLevel(logging.INFO)
+    
+    # Format du log
+    formatter = logging.Formatter('[%(asctime)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    
+    # Handler console (toujours actif)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    # Handler fichier avec rotation (si LOG_FILE configuré)
+    if LOG_FILE:
+        try:
+            # Rotation automatique selon configuration
+            file_handler = RotatingFileHandler(
+                LOG_FILE,
+                maxBytes=LOG_FILE_MAX_SIZE_MB * 1024 * 1024,  # Conversion MB → bytes
+                backupCount=LOG_FILE_BACKUP_COUNT,
+                encoding='utf-8'
+            )
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+            
+            # Log de config au démarrage
+            total_files = LOG_FILE_BACKUP_COUNT + 1
+            max_space_mb = total_files * LOG_FILE_MAX_SIZE_MB
+            logger.info(f"📝 Log fichier activé: {LOG_FILE}")
+            logger.info(f"   Rotation: {LOG_FILE_MAX_SIZE_MB} MB/fichier, {total_files} fichiers max ({max_space_mb} MB total)")
+        except Exception as e:
+            print(f"[ERROR] Impossible de créer le fichier de log {LOG_FILE}: {e}")
+
 
 def log(msg):
-    """Logger avec timestamp"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {msg}")
+    """Logger avec timestamp et rotation automatique"""
+    if logger is None:
+        setup_logger()
+    logger.info(msg)
 
 
 def is_trailer(filename):
@@ -186,34 +232,35 @@ def extract_from_mkv(mkv_path, base_path):
     codec = track.get("codec", "").lower()
     
     # Déterminer l'extension selon le codec
-    if "ass" in codec:
+    if "s_text/ass" in codec or "advanced" in codec or ("ass" in codec and "substation" not in codec):
         format_ext = "ass"
-    elif "pgs" in codec:
-        format_ext = "sup"
-    elif "ssa" in codec:
+    elif "substation" in codec or "s_text/ssa" in codec or "ssa" in codec:
         format_ext = "ssa"
+    elif "s_hdmv/pgs" in codec or "hdmv" in codec or "pgs" in codec:
+        format_ext = "sup"
+    elif "s_vobsub" in codec or "vobsub" in codec:
+        format_ext = "sub"
+    elif "webvtt" in codec or "s_text/webvtt" in codec:
+        format_ext = "vtt"
     else:
-        format_ext = "srt"
+        format_ext = "srt"  # Fallback (SubRip, S_TEXT/UTF8)
     
     temp_file = f"{base_path}.temp.{format_ext}"
     out_file = f"{base_path}.en.{format_ext}.txt"
-    
-    log(f"  → extraction sous-titre EN (track {track_id}) depuis MKV")
     
     try:
         # Extraire vers un fichier temporaire
         subprocess.run(
             ["mkvextract", "tracks", mkv_path, f"{track_id}:{temp_file}"],
-            check=True
+            check=True,
+            capture_output=True
         )
         
         # Renommer en .en.FORMAT.txt
         shutil.move(temp_file, out_file)
-        log(f"  ✅ extrait → {os.path.basename(out_file)}")
         return True
         
     except Exception as e:
-        log(f"  ❌ erreur extraction : {e}")
         # Nettoyer le fichier temporaire si présent
         if os.path.exists(temp_file):
             os.remove(temp_file)
@@ -231,43 +278,45 @@ def process_video_file(video_path):
     6. Pas MKV → erreur
     """
     base, ext = os.path.splitext(video_path)
+    video_name = os.path.basename(video_path)
     is_mkv = ext.lower() == ".mkv"
     
     # 1. Vérifier si fichier FR externe existe
     if find_french_subtitle(base):
-        log(f"  🇫🇷 Sous-titre français externe trouvé")
-        log(f"  ↪ skip (déjà traduit)")
+        log(f"⏭️ {video_name} | Déjà traduit (sous-titre FR externe)")
         return "french_external"
     
     # 2. Vérifier si piste sous-titre FR dans le MKV
     if is_mkv and has_french_subtitle_in_mkv(video_path):
-        log(f"  ↪ skip (sous-titre français dans le MKV)")
+        log(f"⏭️ {video_name} | Déjà traduit (piste FR dans MKV)")
         return "french_in_mkv"
     
     # 3. Vérifier si fichier EN externe existe
     external_file = find_external_subtitle(base)
     
     if external_file:
-        log(f"  ✓ fichier externe anglais trouvé : {os.path.basename(external_file)}")
-        log(f"  ↪ rien à faire (fichier déjà disponible)")
+        log(f"✓ {video_name} | Source externe trouvée: {os.path.basename(external_file)}")
         return "external"
     
     # 4. Vérifier si déjà extrait (.en.XXX.txt)
-    if find_extracted_subtitle(base):
-        log(f"  ✓ fichier .en.XXX.txt déjà extrait")
-        log(f"  ↪ rien à faire")
+    extracted = find_extracted_subtitle(base)
+    if extracted:
+        log(f"✓ {video_name} | Déjà extrait: {os.path.basename(extracted)}")
         return "extracted"
     
     # 5. Pas de fichier externe → extraire du MKV
     if is_mkv:
-        log(f"  ℹ️ pas de fichier externe → extraction depuis MKV")
         if extract_from_mkv(video_path, base):
+            # Trouver le fichier extrait pour afficher son nom
+            extracted = find_extracted_subtitle(base)
+            extracted_name = os.path.basename(extracted) if extracted else "fichier"
+            log(f"✅ {video_name} | Extrait: {extracted_name}")
             return "mkv_extracted"
         else:
-            log("  ❌ échec extraction MKV")
+            log(f"❌ {video_name} | Échec extraction MKV")
             return "failed"
     else:
-        log("  ❌ pas de fichier externe et pas un MKV")
+        log(f"❌ {video_name} | Pas de source (non-MKV)")
         return "no_source"
 
 
@@ -277,14 +326,8 @@ def run_extraction():
         log("❌ SOURCE_FOLDER manquant ou n'existe pas dans .env")
         return
     
-    log("=" * 60)
     log("🚀 DÉBUT DE L'EXTRACTION")
-    log("=" * 60)
-    log(f"📂 Dossier source : {SOURCE_FOLDER}")
-    log(f"🎬 Extensions supportées : {', '.join(VIDEO_EXTENSIONS)}")
-    log(f"🚫 Ignore les fichiers contenant : '-trailer'")
-    log(f"📝 Format extraction : .en.FORMAT.txt")
-    log(f"🇫🇷 Skip si sous-titre français détecté")
+    log(f"📂 Dossier: {SOURCE_FOLDER} | Formats: {', '.join(VIDEO_EXTENSIONS)} | Ignore: trailers")
     
     stats = {
         "total": 0,
@@ -307,14 +350,10 @@ def run_extraction():
             # Ignorer les trailers
             if is_trailer(file):
                 stats["trailers_skipped"] += 1
-                log(f"\n🚫 Ignoré (trailer) : {file}")
+                log(f"⏭️ {file} | Trailer ignoré")
                 continue
             
             video_path = os.path.join(root, file)
-            
-            log(f"\n{'='*60}")
-            log(f"🎬 Traitement : {file}")
-            log('='*60)
             
             result = process_video_file(video_path)
             
@@ -335,20 +374,11 @@ def run_extraction():
             
             stats["total"] += 1
     
-    log(f"\n{'='*60}")
-    log(f"✅ EXTRACTION TERMINÉE")
-    log(f"📊 Statistiques :")
-    log(f"  Total fichiers traités : {stats['total']}")
-    if stats["french_external"] > 0:
-        log(f"  🇫🇷 FR externe trouvé : {stats['french_external']}")
-    if stats["french_in_mkv"] > 0:
-        log(f"  🇫🇷 FR dans MKV : {stats['french_in_mkv']}")
-    if stats["external_found"] > 0:
-        log(f"  📄 EN externe trouvé : {stats['external_found']}")
-    if stats["already_extracted"] > 0:
-        log(f"  ✓ Déjà extrait (.en.XXX.txt) : {stats['already_extracted']}")
-    if stats["mkv_extracted"] > 0:
-        log(f"  🎬 Extraction MKV réussie : {stats['mkv_extracted']}")
+    # Stats compactes
+    french_total = stats["french_external"] + stats["french_in_mkv"]
+    skipped = stats["trailers_skipped"] + french_total + stats["external_found"] + stats["already_extracted"]
+    
+    log(f"✅ EXTRACTION TERMINÉE | Total: {stats['total']} | Extraits: {stats['mkv_extracted']} | Skippés: {skipped} | Erreurs: {stats['failed'] + stats['no_source']}")
     if stats["failed"] > 0:
         log(f"  ❌ Extraction échouée : {stats['failed']}")
     if stats["no_source"] > 0:
@@ -359,23 +389,24 @@ def run_extraction():
 
 
 def main():
-    log(f"🐳 Mode : {'WATCH (agent continu)' if WATCH_MODE else 'RUN ONCE (exécution unique)'}")
+    mode = "WATCH (agent continu)" if WATCH_MODE else "RUN ONCE (exécution unique)"
+    log(f"🐳 Mode: {mode}")
     
     if WATCH_MODE:
-        log(f"⏰ Intervalle : {WATCH_INTERVAL}s ({WATCH_INTERVAL/3600:.1f}h)")
-        log(f"🔄 Agent démarré - CTRL+C pour arrêter\n")
+        interval_hours = WATCH_INTERVAL / 3600
+        log(f"⏰ Intervalle: {WATCH_INTERVAL}s ({interval_hours:.1f}h) | CTRL+C pour arrêter")
         
         while True:
             try:
                 run_extraction()
-                log(f"\n💤 Prochaine vérification dans {WATCH_INTERVAL}s ({WATCH_INTERVAL/3600:.1f}h)...\n")
+                log(f"💤 Prochaine vérification dans {interval_hours:.1f}h...")
                 time.sleep(WATCH_INTERVAL)
             except KeyboardInterrupt:
-                log("\n👋 Arrêt de l'agent demandé")
+                log("👋 Arrêt de l'agent demandé")
                 break
             except Exception as e:
-                log(f"\n❌ Erreur inattendue : {e}")
-                log(f"⏳ Nouvelle tentative dans {WATCH_INTERVAL}s...\n")
+                log(f"❌ Erreur inattendue: {e}")
+                log(f"⏳ Nouvelle tentative dans {interval_hours:.1f}h...")
                 time.sleep(WATCH_INTERVAL)
     else:
         run_extraction()

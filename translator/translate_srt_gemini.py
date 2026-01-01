@@ -2,6 +2,9 @@ import os
 import json
 import time
 import sys
+import subprocess
+import shutil
+import re
 import pysrt
 import pytz
 from dotenv import load_dotenv
@@ -10,15 +13,14 @@ from google.genai import types
 from datetime import datetime, timedelta
 
 # ==========================================
-# translate_srt_gemini.py - V5 (Production Ready)
+# translate_srt_gemini.py - V6 (Production Ready)
 # ==========================================
-# Optimisations finales :
-# - system_instruction pour économie tokens
-# - Cooldown intelligent 11h05 FR
-# - Retry sur réponse vide (2 tentatives)
-# - Nettoyage automatique progress.json + .en.XXX.txt
-# - Support multi-modèles avec quotas indépendants
-# - Mode watch Docker ready
+# Nouvelles fonctionnalités V6 :
+# - Support ASS/SSA avec conversion automatique → SRT
+# - Détection formats bitmap (SUP/SUB) non traduisibles
+# - Nettoyage des fichiers .to.srt.txt après traduction
+# - Naming cohérent : Film.en.ssa.to.srt.txt
+# - Nécessite ffmpeg dans le Docker
 # ==========================================
 
 load_dotenv()
@@ -27,40 +29,89 @@ load_dotenv()
 # CONFIG
 # =========================
 SOURCE_FOLDER = os.getenv("SOURCE_FOLDER")
-PAUSE_SECONDS = int(os.getenv("PAUSE_SECONDS", 10))  # Optimisé : 10s au lieu de 30s
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", 50))  # Optimisé : 50 au lieu de 10
+PAUSE_SECONDS = int(os.getenv("PAUSE_SECONDS", 10))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", 50))
 WATCH_MODE = os.getenv("WATCH_MODE", "true").lower() == "true"
 WATCH_INTERVAL = int(os.getenv("WATCH_INTERVAL", 3600))
+LOG_FILE = os.getenv("LOG_FILE", None)  # None = console uniquement
+LOG_FILE_MAX_SIZE_MB = int(os.getenv("LOG_FILE_MAX_SIZE_MB", 10))  # Taille max par fichier (MB)
+LOG_FILE_BACKUP_COUNT = int(os.getenv("LOG_FILE_BACKUP_COUNT", 2))  # Nombre de backups
+
+# Variables de nettoyage (défaut: false = on garde tout)
+DELETE_PROGRESS_AFTER = os.getenv("DELETE_PROGRESS_AFTER", "false").lower() == "true"
+DELETE_SOURCE_AFTER = os.getenv("DELETE_SOURCE_AFTER", "false").lower() == "true"
+DELETE_CONVERTED_AFTER = os.getenv("DELETE_CONVERTED_AFTER", "false").lower() == "true"
 
 API_KEYS = json.loads(os.getenv("GEMINI_API_KEYS") or "[]")
 MODELS = json.loads(os.getenv("GEMINI_MODELS") or "[]")
 
 COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", 3600))
-RETRY_EMPTY_RESPONSE_DELAY = 10  # Délai entre 2 tentatives si réponse vide
+RETRY_EMPTY_RESPONSE_DELAY = 10
 
 if not API_KEYS or not MODELS:
     raise RuntimeError("GEMINI_API_KEYS ou GEMINI_MODELS manquant dans .env")
 
-# Extensions vidéo supportées
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".flv", ".wmv")
+SUBTITLE_EXTENSIONS = ["srt", "ass", "sup", "ssa", "vtt", "sub"]
 
-# Extensions de sous-titres
-SUBTITLE_EXTENSIONS = ["srt", "ass", "sup", "ssa"]
-
-# Timezone France
 PARIS_TZ = pytz.timezone('Europe/Paris')
+
+# Configuration du logger
+import logging
+from logging.handlers import RotatingFileHandler
+
+logger = None
+
+def setup_logger():
+    """Configure le logger avec rotation automatique si LOG_FILE est défini"""
+    global logger
+    
+    logger = logging.getLogger('subtitle_translator')
+    logger.setLevel(logging.INFO)
+    
+    # Format du log
+    formatter = logging.Formatter('[%(asctime)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    
+    # Handler console (toujours actif)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    # Handler fichier avec rotation (si LOG_FILE configuré)
+    if LOG_FILE:
+        try:
+            # Rotation automatique selon configuration
+            # backupCount = nombre de backups (total fichiers = backupCount + 1)
+            # maxBytes en bytes (config en MB)
+            file_handler = RotatingFileHandler(
+                LOG_FILE,
+                maxBytes=LOG_FILE_MAX_SIZE_MB * 1024 * 1024,  # Conversion MB → bytes
+                backupCount=LOG_FILE_BACKUP_COUNT,
+                encoding='utf-8'
+            )
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+            
+            # Log de config au démarrage
+            total_files = LOG_FILE_BACKUP_COUNT + 1
+            max_space_mb = total_files * LOG_FILE_MAX_SIZE_MB
+            logger.info(f"📝 Log fichier activé: {LOG_FILE}")
+            logger.info(f"   Rotation: {LOG_FILE_MAX_SIZE_MB} MB/fichier, {total_files} fichiers max ({max_space_mb} MB total)")
+        except Exception as e:
+            print(f"[ERROR] Impossible de créer le fichier de log {LOG_FILE}: {e}")
 
 
 def log(msg):
-    """Logger avec timestamp"""
-    timestamp = datetime.now(PARIS_TZ).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {msg}")
+    """Logger avec timestamp et rotation automatique"""
+    if logger is None:
+        setup_logger()
+    logger.info(msg)
 
 
 # =========================
 # COOLDOWN MANAGEMENT
 # =========================
-cooldowns = {}  # {(model, key_index): timestamp}
+cooldowns = {}
 
 
 def now():
@@ -85,29 +136,20 @@ def any_key_available():
 
 
 def calculate_next_quota_reset():
-    """
-    Calcule le prochain reset de quota : 11h05 heure de France
-    Retourne (datetime, seconds_to_wait)
-    """
+    """Calcule le prochain reset de quota : 11h05 heure de France"""
     now_paris = datetime.now(PARIS_TZ)
     
-    # Vérifier si on est déjà passé 11h05 aujourd'hui
     if now_paris.hour > 11 or (now_paris.hour == 11 and now_paris.minute >= 5):
-        # Déjà passé → demain 11h05
         next_reset = (now_paris + timedelta(days=1)).replace(hour=11, minute=5, second=0, microsecond=0)
     else:
-        # Pas encore passé → aujourd'hui 11h05
         next_reset = now_paris.replace(hour=11, minute=5, second=0, microsecond=0)
     
     sleep_seconds = (next_reset - now_paris).total_seconds()
-    
     return next_reset, sleep_seconds
 
 
 def wait_for_quota_reset():
-    """
-    Attend jusqu'à 11h05 (reset du quota API Gemini)
-    """
+    """Attend jusqu'à 11h05 (reset du quota API Gemini)"""
     next_reset, sleep_seconds = calculate_next_quota_reset()
     
     log("❌ Toutes les clés API bloquées (quota dépassé)")
@@ -115,10 +157,7 @@ def wait_for_quota_reset():
     log(f"💤 Agent en veille pendant {sleep_seconds/3600:.1f}h...")
     
     time.sleep(sleep_seconds)
-    
     log("✨ Réveil de l'agent - Quota API réinitialisé")
-    
-    # Réinitialiser tous les cooldowns
     cooldowns.clear()
 
 
@@ -126,15 +165,12 @@ def wait_for_quota_reset():
 # GEMINI CALL
 # =========================
 def call_gemini(model, api_key, text, retry_count=0):
-    """
-    Appelle l'API Gemini avec system_instruction optimisé
-    Gère les réponses vides avec retry (max 2 tentatives)
-    """
+    """Appelle l'API Gemini avec system_instruction optimisé"""
     client = genai.Client(api_key=api_key)
 
     response = client.models.generate_content(
         model=model,
-        contents=text,  # Juste le batch de sous-titres
+        contents=text,
         config=types.GenerateContentConfig(
             system_instruction=(
                 "Tu es un traducteur professionnel de sous-titres. "
@@ -146,7 +182,7 @@ def call_gemini(model, api_key, text, retry_count=0):
     )
 
     if not response or not response.text or response.text.strip() == "":
-        if retry_count < 1:  # Première tentative ratée, on réessaye
+        if retry_count < 1:
             log(f"  ⚠️ Réponse vide, nouvelle tentative dans {RETRY_EMPTY_RESPONSE_DELAY}s...")
             time.sleep(RETRY_EMPTY_RESPONSE_DELAY)
             return call_gemini(model, api_key, text, retry_count + 1)
@@ -161,10 +197,8 @@ def call_gemini(model, api_key, text, retry_count=0):
 # =========================
 def translate_batch(texts):
     while True:
-
         for model in MODELS:
             for key_index, api_key in enumerate(API_KEYS):
-
                 if not is_available(model, key_index):
                     continue
 
@@ -187,20 +221,137 @@ def translate_batch(texts):
                         log(f"  ⚠️ erreur clé #{key_index + 1} ({model}) : {e}")
                         block_key(model, key_index)
 
-        # 🔥 Toutes les clés sont bloquées
         if not any_key_available():
             if WATCH_MODE:
-                # Mode agent : attendre jusqu'à 11h05
                 wait_for_quota_reset()
-                # Après le réveil, on continue la boucle
                 continue
             else:
-                # Mode run once : arrêter
                 log("\n❌ Toutes les clés sont en cooldown.")
                 log("👉 Arrêt du programme.\n")
                 sys.exit(1)
 
         time.sleep(2)
+
+
+# =========================
+# FORMAT CONVERSION
+# =========================
+def clean_html_tags(srt_file):
+    """
+    Nettoie les balises HTML du fichier SRT
+    (balises qui restent après conversion ASS → SRT)
+    """
+    import re
+    
+    try:
+        subs = pysrt.open(srt_file, encoding='utf-8')
+        modified = False
+        
+        for sub in subs:
+            # Supprimer toutes les balises HTML
+            clean_text = re.sub(r'<[^>]+>', '', sub.text)
+            if clean_text != sub.text:
+                sub.text = clean_text
+                modified = True
+        
+        if modified:
+            subs.save(srt_file, encoding='utf-8')
+            return True
+        return False
+    except Exception as e:
+        log(f"  ⚠️ Erreur nettoyage HTML: {e}")
+        return False
+
+
+def convert_to_srt_if_needed(subtitle_file):
+    """
+    Convertit ASS/SSA/VTT en SRT temporaire pour traduction
+    Retourne (fichier_srt, needs_cleanup)
+    """
+    # Déjà SRT → pas de conversion
+    if '.srt.txt' in subtitle_file or subtitle_file.endswith('.srt'):
+        return subtitle_file, False
+    
+    # Formats bitmap → impossible
+    if any(ext in subtitle_file for ext in ['.sup.txt', '.sub.txt']):
+        return None, False
+    
+    # Besoin conversion
+    if '.ass.txt' in subtitle_file:
+        temp_srt = subtitle_file.replace('.ass.txt', '.ass.to.srt.txt')
+    elif '.ssa.txt' in subtitle_file:
+        temp_srt = subtitle_file.replace('.ssa.txt', '.ssa.to.srt.txt')
+    elif '.vtt.txt' in subtitle_file:
+        temp_srt = subtitle_file.replace('.vtt.txt', '.vtt.to.srt.txt')
+    elif subtitle_file.endswith('.ass'):
+        temp_srt = subtitle_file.replace('.ass', '.ass.to.srt.txt')
+    elif subtitle_file.endswith('.ssa'):
+        temp_srt = subtitle_file.replace('.ssa', '.ssa.to.srt.txt')
+    elif subtitle_file.endswith('.vtt'):
+        temp_srt = subtitle_file.replace('.vtt', '.vtt.to.srt.txt')
+    else:
+        # Autre format
+        base = subtitle_file.rsplit('.', 1)[0]
+        temp_srt = f"{base}.to.srt.txt"
+    
+    # Convertir avec ffmpeg si pas déjà fait
+    if not os.path.exists(temp_srt):
+        try:
+            import uuid
+            
+            # Utiliser /tmp pour éviter les problèmes de chemins avec caractères spéciaux
+            tmp_input = f"/tmp/{uuid.uuid4()}.ass"
+            tmp_output = f"/tmp/{uuid.uuid4()}.srt"
+            
+            # Copier fichier source vers /tmp
+            shutil.copy(subtitle_file, tmp_input)
+            
+            # Déterminer le format d'entrée
+            input_format = None
+            if '.ass.txt' in subtitle_file or '.ssa.txt' in subtitle_file:
+                input_format = 'ass'  # Force format ASS/SSA
+            elif '.vtt.txt' in subtitle_file:
+                input_format = 'webvtt'
+            
+            # Construire la commande ffmpeg
+            cmd = ['ffmpeg']
+            if input_format:
+                cmd.extend(['-f', input_format])
+            cmd.extend(['-i', tmp_input, '-c:s', 'srt', tmp_output, '-y'])
+            
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            
+            # Copier le résultat vers la destination finale
+            shutil.move(tmp_output, temp_srt)
+            
+            # Nettoyer /tmp
+            if os.path.exists(tmp_input):
+                os.remove(tmp_input)
+            
+            # Nettoyer les balises HTML qui restent après conversion
+            clean_html_tags(temp_srt)
+            
+        except subprocess.CalledProcessError as e:
+            # Nettoyer /tmp en cas d'erreur
+            for f in [tmp_input, tmp_output]:
+                if os.path.exists(f):
+                    os.remove(f)
+            return None, False
+        except Exception as e:
+            return None, False
+    
+    return temp_srt, True  # Fichier temp, à nettoyer
+
+
+def cleanup_converted_files(base_path):
+    """Supprime tous les fichiers .to.srt.txt si DELETE_CONVERTED_AFTER=true"""
+    if not DELETE_CONVERTED_AFTER:
+        return
+    
+    for ext in SUBTITLE_EXTENSIONS:
+        converted = f"{base_path}.en.{ext}.to.srt.txt"
+        if os.path.exists(converted):
+            os.remove(converted)
 
 
 # =========================
@@ -219,22 +370,23 @@ def save_progress(path, index):
 
 
 def delete_progress(path):
-    """Supprime le fichier de progression"""
+    """Supprime le fichier de progression si DELETE_PROGRESS_AFTER=true"""
+    if not DELETE_PROGRESS_AFTER:
+        return
+    
     if os.path.exists(path):
         os.remove(path)
-        log(f"  🗑️ Nettoyage : {os.path.basename(path)} supprimé")
 
 
 def delete_extracted_subtitle(base_path):
-    """
-    Supprime les fichiers .en.XXX.txt (fichiers extraits du MKV)
-    Ne touche PAS aux fichiers externes (.en.srt, .srt, etc.)
-    """
+    """Supprime les fichiers .en.XXX.txt (fichiers extraits du MKV) si DELETE_SOURCE_AFTER=true"""
+    if not DELETE_SOURCE_AFTER:
+        return False
+    
     for ext in SUBTITLE_EXTENSIONS:
         extracted_file = f"{base_path}.en.{ext}.txt"
         if os.path.isfile(extracted_file):
             os.remove(extracted_file)
-            log(f"  🗑️ Nettoyage : {os.path.basename(extracted_file)} supprimé")
             return True
     return False
 
@@ -243,14 +395,7 @@ def delete_extracted_subtitle(base_path):
 # FILE DETECTION
 # =========================
 def find_english_subtitle(base_path):
-    """
-    Cherche un fichier source anglais dans l'ordre de priorité :
-    1. .en.srt.txt, .en.ass.txt, .en.sup.txt, .en.ssa.txt (fichiers extraits)
-    2. .en.srt, .en.ass, .en.sup, .en.ssa (fichiers externes avec langue)
-    3. .srt, .ass, .sup, .ssa (fichiers externes sans langue)
-    
-    Retourne le chemin du fichier ou None
-    """
+    """Cherche un fichier source anglais dans l'ordre de priorité"""
     # Priorité 1 : fichiers extraits .en.XXX.txt
     for ext in SUBTITLE_EXTENSIONS:
         extracted_file = f"{base_path}.en.{ext}.txt"
@@ -278,51 +423,51 @@ def find_english_subtitle(base_path):
 # MAIN TRANSLATION
 # =========================
 def translate_subtitle(video_path):
-    """
-    Traduit un fichier de sous-titre
-    Retourne le statut : "completed", "already_done", "no_source", "error"
-    """
+    """Traduit un fichier de sous-titre"""
     base, _ = os.path.splitext(video_path)
+    video_name = os.path.basename(video_path)
     output_path = f"{base}.fr.srt"
     progress_path = f"{base}.fr.progress.json"
     
     # 1. Vérifier si .fr.srt existe
     if os.path.isfile(output_path):
-        # a. Si progress.json n'existe pas → déjà terminé
         if not os.path.exists(progress_path):
-            log(f"  ✓ Traduction déjà terminée (pas de progress.json)")
+            log(f"⏭️ {video_name} | Déjà traduit (Film.fr.srt existe)")
             return "already_done"
         
-        # b. Si progress.json existe → vérifier si terminé
         try:
             subs_check = pysrt.open(output_path, encoding="utf-8")
             total_lines = len(subs_check)
             last_index = load_progress(progress_path)
             
             if last_index >= total_lines:
-                log(f"  ✓ Traduction terminée ({last_index}/{total_lines})")
+                log(f"⏭️ {video_name} | Traduction complète ({last_index}/{total_lines})")
                 delete_progress(progress_path)
                 delete_extracted_subtitle(base)
+                cleanup_converted_files(base)
                 return "already_done"
-            else:
-                log(f"  ↪ Reprise traduction à {last_index + 1}/{total_lines}")
         except Exception as e:
-            log(f"  ⚠️ Erreur vérification progress : {e}")
+            log(f"⚠️ {video_name} | Erreur vérification progress: {e}")
     
     # 2. Chercher fichier source anglais
     source_file = find_english_subtitle(base)
     
     if not source_file:
-        log(f"  ❌ Aucune source anglaise trouvée")
+        log(f"❌ {video_name} | Aucune source anglaise trouvée")
         return "no_source"
     
-    log(f"  📄 Source : {os.path.basename(source_file)}")
+    # 3. Convertir en SRT si nécessaire
+    srt_file, needs_cleanup = convert_to_srt_if_needed(source_file)
     
-    # 3. Charger le fichier source
+    if not srt_file:
+        log(f"❌ {video_name} | Format bitmap (image) non traduisible sans OCR")
+        return "unsupported_format"
+    
+    # 4. Charger le fichier SRT
     try:
-        subs = pysrt.open(source_file, encoding="utf-8")
+        subs = pysrt.open(srt_file, encoding="utf-8")
     except Exception as e:
-        log(f"  ❌ Erreur lecture source : {e}")
+        log(f"❌ {video_name} | Erreur lecture source: {e}")
         return "error"
     
     total = len(subs)
@@ -333,14 +478,22 @@ def translate_subtitle(video_path):
     else:
         translated = subs[:]
     
-    log(f"  📊 Lignes : {total}")
-    log(f"  ▶ Début à : {last_done + 1}")
+    # Log de début compact
+    source_name = os.path.basename(source_file)
+    conversion_info = ""
+    if needs_cleanup or '.ssa.txt' in source_file or '.ass.txt' in source_file:
+        conversion_info = " | Converting ASS→SRT"
     
-    # Suivi du temps pour estimation
-    batch_times = []  # Stocke les temps des derniers batches
-    start_translation = time.time()
+    if last_done > 0:
+        log(f"🎬 {video_name} | Source: {source_name} ({total} lignes) | Reprise à {last_done + 1}{conversion_info}")
+    else:
+        log(f"🎬 {video_name} | Source: {source_name} ({total} lignes){conversion_info}")
     
-    # 4. Traduction par lots
+    # 5. Suivi du temps pour estimation
+    batch_times = []
+    start_time = time.time()
+    
+    # 6. Traduction par lots
     for i in range(last_done, total, BATCH_SIZE):
         batch_start = time.time()
         
@@ -359,15 +512,11 @@ def translate_subtitle(video_path):
         translated.save(output_path, encoding="utf-8")
         save_progress(progress_path, i + len(batch))
         
-        # Calculer progression
         current_index = i + len(batch)
         percent = current_index / total * 100
         
-        log(f"  ✅ {i+1}-{current_index} / {total} ({percent:.1f}%)")
-        
         # Pause avant de mesurer le temps total
-        if current_index < total:  # Pas de pause après le dernier batch
-            log(f"  ⏳ pause {PAUSE_SECONDS}s\n")
+        if current_index < total:
             time.sleep(PAUSE_SECONDS)
         
         # Calculer le temps TOTAL du batch (traduction + pause)
@@ -375,39 +524,52 @@ def translate_subtitle(video_path):
         batch_duration = batch_end - batch_start
         batch_times.append(batch_duration)
         
-        # Garder seulement les 5 derniers temps pour moyenne mobile
         if len(batch_times) > 5:
             batch_times.pop(0)
         
-        # Calculer temps restant (seulement si pas le dernier batch)
+        # Log de progression compact
         if current_index < total and len(batch_times) > 0:
             avg_batch_time = sum(batch_times) / len(batch_times)
             remaining_lines = total - current_index
             remaining_batches = remaining_lines / BATCH_SIZE
             estimated_seconds = remaining_batches * avg_batch_time
             
-            # Formater le temps restant
             if estimated_seconds < 60:
                 time_str = f"{int(estimated_seconds)}s"
             elif estimated_seconds < 3600:
                 minutes = int(estimated_seconds / 60)
-                seconds = int(estimated_seconds % 60)
-                time_str = f"{minutes}m {seconds}s"
+                time_str = f"{minutes}m"
             else:
                 hours = int(estimated_seconds / 3600)
                 minutes = int((estimated_seconds % 3600) / 60)
-                time_str = f"{hours}h {minutes}m"
+                time_str = f"{hours}h{minutes}m"
             
-            # Calculer l'heure de fin prévue
             end_time = datetime.now(PARIS_TZ) + timedelta(seconds=estimated_seconds)
             end_time_str = end_time.strftime("%H:%M")
             
-            log(f"  ⏱️ Restant : ~{time_str} (fin prévue : {end_time_str})\n")
+            log(f"⏳ {video_name} | {i+1}-{current_index}/{total} ({percent:.1f}%) | ETA: ~{time_str} (fin: {end_time_str})")
+        else:
+            # Dernier batch
+            log(f"⏳ {video_name} | {i+1}-{current_index}/{total} ({percent:.1f}%)")
     
-    # 5. Traduction terminée → nettoyage
-    log(f"  🎉 Traduction terminée")
+    # 7. Traduction terminée → nettoyage
+    total_duration = time.time() - start_time
+    if total_duration < 60:
+        duration_str = f"{int(total_duration)}s"
+    elif total_duration < 3600:
+        minutes = int(total_duration / 60)
+        seconds = int(total_duration % 60)
+        duration_str = f"{minutes}m {seconds}s"
+    else:
+        hours = int(total_duration / 3600)
+        minutes = int((total_duration % 3600) / 60)
+        duration_str = f"{hours}h {minutes}m"
+    
     delete_progress(progress_path)
     delete_extracted_subtitle(base)
+    cleanup_converted_files(base)
+    
+    log(f"✅ {video_name} | Terminé en {duration_str} | Output: {os.path.basename(output_path)}")
     
     return "completed"
 
@@ -421,36 +583,24 @@ def run_translation():
         log("❌ SOURCE_FOLDER manquant ou n'existe pas")
         return
     
-    log("=" * 60)
     log("🚀 DÉBUT DE LA TRADUCTION")
-    log("=" * 60)
-    log(f"📂 Dossier source : {SOURCE_FOLDER}")
-    log(f"🎬 Extensions vidéo : {', '.join(VIDEO_EXTENSIONS)}")
-    log(f"📝 Recherche : .en.XXX.txt + fichiers externes")
-    log(f"🇫🇷 Output : .fr.srt")
-    log(f"⏰ Reset quota API : 11h05 heure de France")
-    log(f"🤖 Modèles : {', '.join(MODELS)}")
+    log(f"📂 Dossier: {SOURCE_FOLDER} | Formats: SRT, ASS, SSA, VTT | Modèles: {', '.join(MODELS)}")
     
     stats = {
         "total": 0,
         "already_done": 0,
         "completed": 0,
-        "in_progress": 0,
         "no_source": 0,
+        "unsupported_format": 0,
         "error": 0
     }
     
     for root, _, files in os.walk(SOURCE_FOLDER):
         for file in files:
-            # Vérifier l'extension vidéo
             if not file.lower().endswith(VIDEO_EXTENSIONS):
                 continue
             
             video_path = os.path.join(root, file)
-            
-            log(f"\n{'='*60}")
-            log(f"🎬 Traitement : {file}")
-            log('='*60)
             
             result = translate_subtitle(video_path)
             
@@ -459,44 +609,31 @@ def run_translation():
             
             stats["total"] += 1
     
-    log(f"\n{'='*60}")
-    log(f"✅ TRADUCTION TERMINÉE")
-    log(f"📊 Statistiques :")
-    log(f"  Total fichiers traités : {stats['total']}")
-    if stats["already_done"] > 0:
-        log(f"  ✓ Déjà traduits : {stats['already_done']}")
-    if stats["completed"] > 0:
-        log(f"  🎉 Traductions complétées : {stats['completed']}")
-    if stats["in_progress"] > 0:
-        log(f"  ↪ En cours : {stats['in_progress']}")
-    if stats["no_source"] > 0:
-        log(f"  ❌ Aucune source : {stats['no_source']}")
-    if stats["error"] > 0:
-        log(f"  ⚠️ Erreurs : {stats['error']}")
-    log('='*60)
+    log(f"✅ TRADUCTION TERMINÉE | Total: {stats['total']} | Complétés: {stats['completed']} | Déjà faits: {stats['already_done']} | Erreurs: {stats['error'] + stats['no_source'] + stats['unsupported_format']}")
 
 
 # =========================
 # MAIN
 # =========================
 def main():
-    log(f"🐳 Mode : {'WATCH (agent continu)' if WATCH_MODE else 'RUN ONCE (exécution unique)'}")
+    mode = "WATCH (agent continu)" if WATCH_MODE else "RUN ONCE (exécution unique)"
+    log(f"🐳 Mode: {mode}")
     
     if WATCH_MODE:
-        log(f"⏰ Intervalle : {WATCH_INTERVAL}s ({WATCH_INTERVAL/3600:.1f}h)")
-        log(f"🔄 Agent démarré - CTRL+C pour arrêter\n")
+        interval_hours = WATCH_INTERVAL / 3600
+        log(f"⏰ Intervalle: {WATCH_INTERVAL}s ({interval_hours:.1f}h) | CTRL+C pour arrêter")
         
         while True:
             try:
                 run_translation()
-                log(f"\n💤 Prochaine vérification dans {WATCH_INTERVAL}s ({WATCH_INTERVAL/3600:.1f}h)...\n")
+                log(f"💤 Prochaine vérification dans {interval_hours:.1f}h...")
                 time.sleep(WATCH_INTERVAL)
             except KeyboardInterrupt:
-                log("\n👋 Arrêt de l'agent demandé")
+                log("👋 Arrêt de l'agent demandé")
                 break
             except Exception as e:
-                log(f"\n❌ Erreur inattendue : {e}")
-                log(f"⏳ Nouvelle tentative dans {WATCH_INTERVAL}s...\n")
+                log(f"❌ Erreur inattendue: {e}")
+                log(f"⏳ Nouvelle tentative dans {interval_hours:.1f}h...")
                 time.sleep(WATCH_INTERVAL)
     else:
         run_translation()

@@ -1,53 +1,88 @@
 version: '3.8'
 
 services:
-  subtitle-translator:
-    image: subtitle-translator:latest
-    container_name: subtitle-translator
-    restart: unless-stopped
-    volumes:
-      # Adapter le chemin vers vos films
-      - /mnt/nas/media/Films:/data
-    environment:
-      # Mode agent (true) ou exécution unique (false)
-      - WATCH_MODE=true
-      
-      # Intervalle de vérification en secondes
-      # 3600 = 1 heure
-      # 21600 = 6 heures
-      # 86400 = 24 heures
-      - WATCH_INTERVAL=3600
-      
-      # Dossier source (monté dans le container)
-      - SOURCE_FOLDER=/data
-      
-      # Configuration traduction
-      - PAUSE_SECONDS=10
-      - BATCH_SIZE=50
-      - COOLDOWN_SECONDS=3600
-      
-      # Clés API Gemini (JSON array)
-      - GEMINI_API_KEYS=["cle1","cle2"]
-      
-      # Modèles Gemini (JSON array)
-      - GEMINI_MODELS=["gemini-3-flash-preview","gemini-2.5-flash"]
-
+  # =========================================
+  # SUBTITLE EXTRACTOR
+  # =========================================
   subtitle-extractor:
     image: subtitle-extractor:latest
     container_name: subtitle-extractor
-    restart: unless-stopped
     volumes:
-      # Adapter le chemin vers vos films
-      - /mnt/nas/media/Films:/data
+      # Remplacer par le chemin réel vers vos films
+      - /path/to/your/movies:/data
     environment:
-      # Mode agent (true) ou exécution unique (false)
+      # Mode agent continu
+       - WATCH_MODE=true
+      
+      # Intervalle de vérification (secondes)
+      # 3600 = 1h, 21600 = 6h, 86400 = 24h
+       - WATCH_INTERVAL=3600
+      
+      # Fichier de log (optionnel)
+      # Laissez commenté pour log console uniquement
+       - LOG_FILE=/data/extractor.log
+      
+      # Rotation des logs (si LOG_FILE configuré)
+       - LOG_FILE_MAX_SIZE_MB=10        # Taille max par fichier (MB)
+       - LOG_FILE_BACKUP_COUNT=2        # Nombre de backups (total = 3 fichiers)
+      
+    restart: unless-stopped
+
+  # =========================================
+  # SUBTITLE TRANSLATOR
+  # =========================================
+  subtitle-translator:
+    image: subtitle-translator:latest
+    container_name: subtitle-translator
+    volumes:
+      # Remplacer par le chemin réel vers vos films
+      - /path/to/your/movies:/data
+    environment:
+      # Mode agent continu
       - WATCH_MODE=true
-
-      # Intervalle de vérification en secondes
-      # 3600 = 1 heure
-      # 21600 = 6 heures
-      # 86400 = 24 heures
+      
+      # Intervalle de vérification (secondes)
+      # 3600 = 1h, 21600 = 6h, 86400 = 24h
       - WATCH_INTERVAL=3600
+      
+      # Fichier de log (optionnel)
+      # Laissez commenté pour log console uniquement
+      - LOG_FILE=/data/translator.log
+      
+      # Rotation des logs (si LOG_FILE configuré)
+      - LOG_FILE_MAX_SIZE_MB=10        # Taille max par fichier (MB)
+      - LOG_FILE_BACKUP_COUNT=2        # Nombre de backups (total = 3 fichiers)
+      
+      # Performance optimisée : ~18 minutes pour 1945 lignes
+      - PAUSE_SECONDS=10
+      - BATCH_SIZE=50
+      
+      # Clés API Gemini (créer sur https://aistudio.google.com/app/apikey)
+      # IMPORTANT: Remplacer par vos vraies clés !
+      - GEMINI_API_KEYS=["clé-1", "clé-2", "clé-3"]
+      
+      # Quotas INDÉPENDANTS par modèle (ne se cannibalisent pas !)
+      # Flash 3 (15 RPM, 1000 RPD) + Flash 2.5 (10 RPM, 250 RPD)
+      # = 25 RPM total par clé, 1250 RPD par clé
+      # Avec 3 clés = 75 RPM, 3750 RPD (capacité ~96 films/jour)
+      - GEMINI_MODELS=["gemini-3-flash-preview", "gemini-2.5-flash"]
 
-      # Dossier source (monté dans le container)
-      - SOURCE_FOLDER=/data
+      # Cooldown si erreur API (secondes)
+      - COOLDOWN_SECONDS=3600
+      
+      # Variables de nettoyage (défaut: false = on garde tout)
+      # Mettre à true pour activer le nettoyage automatique
+      
+      # Supprimer .fr.progress.json après traduction ?
+      - DELETE_PROGRESS_AFTER=false
+      
+      # Supprimer .en.XXX.txt après traduction ?
+      - DELETE_SOURCE_AFTER=false
+      
+      # Supprimer .to.srt.txt après traduction ?
+      - DELETE_CONVERTED_AFTER=false
+      
+    restart: unless-stopped
+    # Optionnel: faire dépendre le translator de l'extractor
+    # depends_on:
+    #   - subtitle-extractor

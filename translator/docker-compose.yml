@@ -20,7 +20,15 @@ services:
       
       # Dossier source (monté dans le container)
       - SOURCE_FOLDER=/data
+
+      # Fichier de log (optionnel)
+      # Laissez commenté pour log console uniquement
       
+      # Activer le log
+      - LOG_FILE=/data/translator.log
+      - LOG_FILE_MAX_SIZE_MB = 10  # Taille max par fichier (MB)
+      - LOG_FILE_BACKUP_COUNT = 2  # Nombre de backups (total = backup + 1)
+
       # Configuration traduction
       - PAUSE_SECONDS=30
       - BATCH_SIZE=10
@@ -30,4 +38,16 @@ services:
       - GEMINI_API_KEYS=["cle1","cle2"]
       
       # Modèles Gemini (JSON array)
-      - GEMINI_MODELS=["gemini-3-flash-preview","gemini-2.5-flash","gemini-3-pro-preview"]
+      - GEMINI_MODELS=["gemini-3-flash-preview","gemini-2.5-flash"]
+
+      # Variables de nettoyage (défaut: false = on garde tout)
+      # Mettre à true pour activer le nettoyage automatique
+      
+      # Supprimer .fr.progress.json après traduction ?
+      - DELETE_PROGRESS_AFTER=false
+      
+      # Supprimer .en.XXX.txt après traduction ?
+      - DELETE_SOURCE_AFTER=false
+      
+      # Supprimer .to.srt.txt après traduction ?
+      - DELETE_CONVERTED_AFTER=false

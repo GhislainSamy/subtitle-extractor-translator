@@ -2,12 +2,12 @@ version: '3.8'
 
 services:
   subtitle-extractor:
-    images: subtitle-extractor:latest
+    build: .
     container_name: subtitle-extractor
     restart: unless-stopped
     volumes:
-      # Adapter le chemin vers vos medias
-      - /mnt/nas/media/films:/data
+      # Adapter le chemin vers vos films
+      - /mnt/nas/media/real-films-indien/_Lien_Symbolique-usbshare1/TEST:/data
     environment:
       # Mode agent (true) ou exécution unique (false)
       - WATCH_MODE=true
@@ -16,7 +16,15 @@ services:
       # 3600 = 1 heure
       # 21600 = 6 heures
       # 86400 = 24 heures
-      - WATCH_INTERVAL=10
+      - WATCH_INTERVAL=3600
       
       # Dossier source (monté dans le container)
       - SOURCE_FOLDER=/data
+
+      # Fichier de log (optionnel)
+      # Laissez commenté pour log console uniquement
+      
+      # Activer le log
+      - LOG_FILE=/data/extractor.log
+      - LOG_FILE_MAX_SIZE_MB = 10  # Taille max par fichier (MB)
+      - LOG_FILE_BACKUP_COUNT = 2  # Nombre de backups (total = backup + 1)
