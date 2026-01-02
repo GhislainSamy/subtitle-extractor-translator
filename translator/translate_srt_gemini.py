@@ -588,6 +588,7 @@ def run_translation():
     
     stats = {
         "total": 0,
+        "trailers_skipped": 0,
         "already_done": 0,
         "completed": 0,
         "no_source": 0,
@@ -600,14 +601,24 @@ def run_translation():
             if not file.lower().endswith(VIDEO_EXTENSIONS):
                 continue
             
+            # Ignorer les trailers (silencieux)
+            if "-trailer" in file.lower():
+                stats["trailers_skipped"] += 1
+                continue
+            
             video_path = os.path.join(root, file)
             
-            result = translate_subtitle(video_path)
-            
-            if result in stats:
-                stats[result] += 1
-            
-            stats["total"] += 1
+            try:
+                result = translate_subtitle(video_path)
+                
+                if result in stats:
+                    stats[result] += 1
+                
+                stats["total"] += 1
+            except Exception as e:
+                log(f"❌ {file} | Erreur inattendue: {e}")
+                stats["error"] += 1
+                stats["total"] += 1
     
     log(f"✅ TRADUCTION TERMINÉE | Total: {stats['total']} | Complétés: {stats['completed']} | Déjà faits: {stats['already_done']} | Erreurs: {stats['error'] + stats['no_source'] + stats['unsupported_format']}")
 
