@@ -9,23 +9,49 @@ Ce projet combine deux agents Docker qui travaillent en tandem :
 1. **🎯 Subtitle Extractor** : Extrait les sous-titres anglais des pistes MKV
 2. **🌐 Subtitle Translator** : Traduit automatiquement EN → FR avec Google Gemini API
 
+### 🆕 Multi-Folders Support
+
+Les deux agents supportent désormais le **traitement de plusieurs dossiers simultanément** :
+- ✅ Configuration simple via JSON array : `SOURCE_FOLDERS=["/media/movies", "/media/series"]`
+- ✅ Stats agrégées sur tous les dossiers
+- ✅ Logs clairs indiquant le dossier en cours : `📂 [1/3] Traitement: /media/movies`
+- ✅ Rétro-compatible avec la config single-folder (`SOURCE_FOLDER`)
+
 ### Workflow complet
 
 ```
+🎯 Single-Folder (mode classique)
 Film.mkv (piste EN intégrée)
          ↓
    [EXTRACTOR]
          ↓
-Film.en.srt.txt (fichier de travail)
+Film.en.srt.tmp (fichier de travail)
          ↓
    [TRANSLATOR]
          ↓
 Film.fr.srt (traduction finale)
 
+🆕 Multi-Folders
+/media/movies/Film1.mkv ──┐
+/media/series/S01E01.mkv ─┤
+/media/docs/Doc1.mkv ─────┘
+         ↓
+   [EXTRACTOR] → parcourt tous les dossiers
+         ↓
+Film1.en.srt.tmp
+S01E01.en.ass.tmp
+Doc1.en.srt.tmp
+         ↓
+   [TRANSLATOR] → parcourt tous les dossiers
+         ↓
+Film1.fr.srt
+S01E01.fr.srt
+Doc1.fr.srt
+
 Résultat final :
-  - Film.mkv (piste EN intégrée)
-  - Film.fr.srt (traduction externe)
-  - Pas de fichiers temporaires
+  - Fichiers vidéo originaux (piste EN intégrée)
+  - Traductions .fr.srt dans chaque dossier
+  - Pas de fichiers temporaires (si nettoyage activé)
   - Pas de doublons dans le lecteur
 ```
 
@@ -42,8 +68,8 @@ L'extension `.tmp` :
 
 Les sous-titres **ASS** (Advanced SubStation Alpha) et **SSA** (SubStation Alpha) contiennent des styles avancés (polices, couleurs, positions). Le translator :
 
-1. **Détecte automatiquement** les formats ASS/SSA extraits (`.en.ass.txt`, `.en.ssa.txt`)
-2. **Convertit via ffmpeg** → format SRT temporaire (`.en.ssa.to.srt.txt`)
+1. **Détecte automatiquement** les formats ASS/SSA extraits (`.en.ass.tmp`, `.en.ssa.tmp`)
+2. **Convertit via ffmpeg** → format SRT temporaire (`.en.ssa.to.srt.tmp`)
 3. **Nettoie les balises HTML** (`<font>`, `<b>`, `<i>`, etc.) qui restent après conversion
 4. **Traduit** le texte propre → `.fr.srt`
 5. **Supprime les fichiers temporaires** (si `DELETE_CONVERTED_AFTER=true`)
@@ -93,21 +119,25 @@ Agent d'extraction de sous-titres anglais depuis les fichiers MKV.
 
 | Variable | Valeur par défaut | Description |
 |----------|-------------------|-------------|
-| `SOURCE_FOLDER` | `/data` | Chemin vers le dossier contenant les vidéos |
+| `SOURCE_FOLDERS` | `[]` | **[NOUVEAU]** Liste JSON des dossiers (ex: `["/media/movies", "/media/series"]`) |
+| `SOURCE_FOLDER` | `/data` | **[LEGACY]** Ancien format single-folder (ignoré si `SOURCE_FOLDERS` défini) |
 | `WATCH_MODE` | `true` | Mode agent continu ou exécution unique |
 | `WATCH_INTERVAL` | `3600` | Intervalle de vérification en secondes |
 | `LOG_FILE` | `None` | Fichier de log (optionnel, None = console uniquement) |
+| `LOG_FILE_MAX_SIZE_MB` | `10` | **[NOUVEAU]** Taille max par fichier de log avant rotation |
+| `LOG_FILE_BACKUP_COUNT` | `2` | **[NOUVEAU]** Nombre de fichiers de backup à conserver |
 
 #### 🚀 Démarrage rapide
 
+**Configuration Single-Folder (classique) :**
 ```bash
 cd extractor/
 
 # 1. Build de l'image Docker
-docker build -t subtitle-extractor-auto .
+docker build -t subtitle-extractor .
 
-# 2. Adapter le chemin dans docker-compose.yml
-# Éditer volumes: pour pointer vers vos films
+# 2. Configurer .env
+SOURCE_FOLDER=/media/movies  # Un seul dossier
 
 # 3. Démarrer le service
 docker-compose up -d
@@ -116,13 +146,55 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
+**Configuration Multi-Folders  :**
+```bash
+cd extractor/
+
+# 1. Build de l'image Docker
+docker build -t subtitle-extractor .
+
+# 2. Configurer .env
+SOURCE_FOLDERS=["/media/movies", "/media/series", "/media/documentaries"]
+
+# 3. Adapter docker-compose.yml pour monter tous les volumes
+volumes:
+  - /path/to/movies:/media/movies
+  - /path/to/series:/media/series
+  - /path/to/docs:/media/documentaries
+
+# 4. Démarrer le service
+docker-compose up -d
+
+# 5. Voir les logs
+docker-compose logs -f
+```
+
 #### 📊 Exemple de sortie
 
+**Single-Folder :**
 ```
-[2025-12-31 10:00:00] 🎬 Traitement : Film.mkv
-[2025-12-31 10:00:00]   track 2 | lang=en | name=english | codec=SubRip/SRT
-[2025-12-31 10:00:00]   → extraction sous-titre EN (track 2) depuis MKV
-[2025-12-31 10:00:05]   ✅ extrait → Film.en.srt.txt
+[2025-01-02 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
+[2025-01-02 10:00:00] 📂 Dossier: /data | Formats: mkv, mp4, avi | Ignore: trailers
+[2025-01-02 10:00:01] ✅ Film.mkv | Extrait: Film.en.srt.tmp
+[2025-01-02 10:00:02] ⭐️ Film2.mkv | Déjà traduit (piste FR dans MKV)
+[2025-01-02 10:00:05] ✅ EXTRACTION TERMINÉE | Total: 2 | Extraits: 1 | Skippés: 1 | Erreurs: 0
+```
+
+**Multi-Folders :**
+```
+[2025-01-02 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
+[2025-01-02 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: mkv, mp4, avi | Ignore: trailers
+[2025-01-02 10:00:01] 📂 [1/3] Traitement: /media/movies
+[2025-01-02 10:00:02]   ✅ Film1.mkv | Extrait: Film1.en.srt.tmp
+[2025-01-02 10:00:03]   ⭐️ Film2.mkv | Déjà traduit (sous-titre FR externe)
+[2025-01-02 10:00:04] 📂 [2/3] Traitement: /media/series
+[2025-01-02 10:00:05]   ✅ S01E01.mkv | Extrait: S01E01.en.ass.tmp
+[2025-01-02 10:00:06]   ✓ S01E02.mkv | Source externe trouvée: S01E02.en.srt
+[2025-01-02 10:00:07] 📂 [3/3] Traitement: /media/documentaries
+[2025-01-02 10:00:08]   ✅ Doc1.mkv | Extrait: Doc1.en.srt.tmp
+[2025-01-02 10:00:09]   ❌ Doc2.mp4 | Pas de source (non-MKV)
+[2025-01-02 10:00:10] ✅ EXTRACTION TERMINÉE | Total: 7 | Extraits: 4 | Skippés: 2 | Erreurs: 1
+[2025-01-02 10:00:10] ============================================================
 ```
 
 #### 🎯 Scénarios
@@ -136,7 +208,7 @@ Input: Film.mkv + Film.en.srt
 **Film MKV avec piste anglaise :**
 ```
 Input: Film.mkv (piste EN intégrée)
-→ Extraction → Film.en.srt.txt
+→ Extraction → Film.en.srt.tmp
 ```
 
 **Film déjà traduit :**
@@ -155,7 +227,7 @@ Agent de traduction automatique EN → FR utilisant Google Gemini API.
 
 **Traduction intelligente :**
 - ✅ Traduction par lots optimisée (50 lignes par batch)
-- ✅ Support multi-formats source : `.en.srt.txt`, `.en.ass.txt`, `.en.ssa.txt` (extraits) + `.en.srt`, `.srt` (externes)
+- ✅ Support multi-formats source : `.en.srt.tmp`, `.en.ass.tmp`, `.en.ssa.tmp` (extraits) + `.en.srt`, `.srt` (externes)
 - ✅ Conversion automatique ASS/SSA/VTT → SRT via ffmpeg
 - ✅ Nettoyage des balises HTML (`<font>`, `<b>`, etc.) après conversion
 - ✅ Gestion des chemins avec caractères spéciaux (conversion via /tmp)
@@ -185,22 +257,32 @@ Agent de traduction automatique EN → FR utilisant Google Gemini API.
 
 | Variable | Valeur par défaut | Description |
 |----------|-------------------|-------------|
-| `SOURCE_FOLDER` | `/data` | Chemin vers les vidéos |
+| `SOURCE_FOLDERS` | `[]` | **[NOUVEAU]** Liste JSON des dossiers (ex: `["/media/movies", "/media/series"]`) |
+| `SOURCE_FOLDER` | `/data` | **[LEGACY]** Ancien format single-folder (ignoré si `SOURCE_FOLDERS` défini) |
 | `WATCH_MODE` | `true` | Mode agent continu ou exécution unique |
 | `WATCH_INTERVAL` | `3600` | Intervalle de vérification (secondes) |
 | `LOG_FILE` | `None` | Fichier de log (optionnel, None = console uniquement) |
+| `LOG_FILE_MAX_SIZE_MB` | `10` | **[NOUVEAU]** Taille max par fichier de log avant rotation |
+| `LOG_FILE_BACKUP_COUNT` | `2` | **[NOUVEAU]** Nombre de fichiers de backup à conserver |
 | `PAUSE_SECONDS` | `10` | Pause entre chaque lot traduit |
 | `BATCH_SIZE` | `50` | Nombre de lignes par lot |
 | `GEMINI_API_KEYS` | `[]` | Clés API Gemini (JSON array) |
 | `GEMINI_MODELS` | `[]` | Modèles Gemini (JSON array) |
 | `DELETE_PROGRESS_AFTER` | `false` | Supprimer .fr.progress.json après traduction |
-| `DELETE_SOURCE_AFTER` | `false` | Supprimer .en.XXX.txt après traduction |
-| `DELETE_CONVERTED_AFTER` | `false` | Supprimer .to.srt.txt après traduction |
+| `DELETE_SOURCE_AFTER` | `false` | Supprimer .en.XXX.tmp après traduction |
+| `DELETE_CONVERTED_AFTER` | `false` | Supprimer .to.srt.tmp après traduction |
 
 **Configuration optimale :**
 
 ```yaml
 environment:
+  # 🆕 Multi-Folders Support
+  # Configuration single-folder (classique)
+  - SOURCE_FOLDER=/data
+  
+  # OU configuration multi-folders
+  - SOURCE_FOLDERS=["/media/movies", "/media/series", "/media/documentaries"]
+  
   # Performance optimisée : ~18 minutes pour 1945 lignes
   - PAUSE_SECONDS=10
   - BATCH_SIZE=50
@@ -212,27 +294,27 @@ environment:
   # Flash 3: 15 RPM, 1000 RPD (prioritaire)
   # Flash 2.5: 10 RPM, 250 RPD (fallback)
   # Total par clé : 25 RPM, 1250 RPD
-  - GEMINI_MODELS=["gemini-3-flash-preview", "gemini-2.5-flash"]
+  - GEMINI_MODELS=["gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
   
   # Nettoyage automatique (défaut: false = on garde tout)
   # Mettre à true pour supprimer les fichiers temporaires
   - DELETE_PROGRESS_AFTER=false   # Garder .fr.progress.json
-  - DELETE_SOURCE_AFTER=false     # Garder .en.XXX.txt
-  - DELETE_CONVERTED_AFTER=false  # Garder .to.srt.txt
+  - DELETE_SOURCE_AFTER=false     # Garder .en.XXX.tmp
+  - DELETE_CONVERTED_AFTER=false  # Garder .to.srt.tmp
 ```
 
 **Gestion du nettoyage :**
 
 Par défaut (`false`), tous les fichiers temporaires sont conservés :
 - ✅ `.fr.progress.json` → reprise possible après interruption
-- ✅ `.en.ssa.txt` → source originale gardée
-- ✅ `.en.ssa.to.srt.txt` → conversion SRT gardée
+- ✅ `.en.ssa.tmp` → source originale gardée
+- ✅ `.en.ssa.to.srt.tmp` → conversion SRT gardée
 
 Pour un nettoyage automatique (mode production), mettre à `true` :
 ```yaml
   - DELETE_PROGRESS_AFTER=true    # Supprimer .fr.progress.json
-  - DELETE_SOURCE_AFTER=true      # Supprimer .en.XXX.txt
-  - DELETE_CONVERTED_AFTER=true   # Supprimer .to.srt.txt
+  - DELETE_SOURCE_AFTER=true      # Supprimer .en.XXX.tmp
+  - DELETE_CONVERTED_AFTER=true   # Supprimer .to.srt.tmp
 ```
 
 Résultat final : uniquement `Film.fr.srt` conservé.
@@ -243,7 +325,7 @@ Résultat final : uniquement `Film.fr.srt` conservé.
 cd translator/
 
 # 1. Build de l'image Docker
-docker build -t subtitle-translator-auto .
+docker build -t subtitle-translator .
 
 # 2. Configurer docker-compose.yml
 # Éditer volumes + GEMINI_API_KEYS
@@ -257,38 +339,59 @@ docker-compose logs -f
 
 #### 📊 Exemple de sortie
 
+**Single-Folder :**
 ```
-[2025-12-31 10:00:00] 🎬 Traitement : Film.mkv
-[2025-12-31 10:00:00]   📄 Source : Film.en.srt.txt
-[2025-12-31 10:00:00]   📊 Lignes : 1945
-[2025-12-31 10:00:00]   ▶ Début à : 1
-[2025-12-31 10:00:16]   ✅ 1-50 / 1945 (2.6%)
-[2025-12-31 10:00:16]   ⏳ pause 10s
-[2025-12-31 10:00:26]   ⏱️ Restant : ~18m (fin prévue : 10:18)
+[2025-01-02 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
+[2025-01-02 10:00:00] 📂 Dossier: /data | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
+[2025-01-02 10:00:00] 🎬 Film.mkv | Source: Film.en.srt.tmp (1945 lignes)
+[2025-01-02 10:00:00] 🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
+[2025-01-02 10:00:16] ⏳ Film.mkv | 1-50/1945 (2.6%) | ETA: ~18m (fin: 10:18)
+[2025-01-02 10:00:30] ⏳ Film.mkv | 51-100/1945 (5.1%) | ETA: ~17m (fin: 10:17)
 ...
-[2025-12-31 10:18:00]   🎉 Traduction terminée
-[2025-12-31 10:18:00]   🗑️ Nettoyage : Film.fr.progress.json supprimé
-[2025-12-31 10:18:00]   🗑️ Nettoyage : Film.en.srt.txt supprimé
+[2025-01-02 10:17:45] ✅ Film.mkv | Terminé en 17m 45s | Output: Film.fr.srt
+[2025-01-02 10:17:45] ✅ TRADUCTION TERMINÉE | Total: 1 | Complétés: 1 | Déjà faits: 0 | Erreurs: 0
+```
+
+**Multi-Folders :**
+```
+[2025-01-02 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
+[2025-01-02 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
+[2025-01-02 10:00:01] 📂 [1/3] Traitement: /media/movies
+[2025-01-02 10:00:02]   ⏭️ Film1.mkv | Déjà traduit (Film.fr.srt existe)
+[2025-01-02 10:00:03]   🎬 Film2.mkv | Source: Film2.en.srt.tmp (500 lignes)
+[2025-01-02 10:00:04]   🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
+[2025-01-02 10:00:20]   ⏳ Film2.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
+...
+[2025-01-02 10:08:00]   ✅ Film2.mkv | Terminé en 8m 0s | Output: Film2.fr.srt
+[2025-01-02 10:08:01] 📂 [2/3] Traitement: /media/series
+[2025-01-02 10:08:02]   🎬 S01E01.mkv | Source: S01E01.en.ass.tmp (300 lignes) | Converting ASS→SRT
+[2025-01-02 10:08:03]   🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
+...
+[2025-01-02 10:14:00]   ✅ S01E01.mkv | Terminé en 6m 0s | Output: S01E01.fr.srt
+[2025-01-02 10:14:01] 📂 [3/3] Traitement: /media/documentaries
+[2025-01-02 10:14:02]   ❌ Doc1.mkv | Aucune source anglaise trouvée
+[2025-01-02 10:14:03] ✅ TRADUCTION TERMINÉE | Total: 4 | Complétés: 2 | Déjà faits: 1 | Erreurs: 1
+[2025-01-02 10:14:03] ============================================================
 ```
 
 #### 🎯 Scénarios
 
 **Fichier extrait du MKV (SRT) :**
 ```
-Input: Film.en.srt.txt
+Input: Film.en.srt.tmp
 → Traduction directe → Film.fr.srt
-→ Nettoyage (si DELETE_SOURCE_AFTER=true) → Film.en.srt.txt supprimé
+→ Nettoyage (si DELETE_SOURCE_AFTER=true) → Film.en.srt.tmp supprimé
 ```
 
 **Fichier extrait du MKV (ASS/SSA) :**
 ```
-Input: Film.en.ssa.txt (contenu ASS v4.00+)
-→ Conversion via /tmp → Film.en.ssa.to.srt.txt
+Input: Film.en.ssa.tmp (contenu ASS v4.00+)
+→ Conversion via /tmp → Film.en.ssa.to.srt.tmp
 → Nettoyage balises HTML (<font>, <b>, etc.)
 → Traduction → Film.fr.srt
 → Nettoyage (si DELETE_*=true) :
-   - Film.en.ssa.txt supprimé
-   - Film.en.ssa.to.srt.txt supprimé
+   - Film.en.ssa.tmp supprimé
+   - Film.en.ssa.to.srt.tmp supprimé
 ```
 
 **Fichier externe :**
@@ -322,7 +425,7 @@ Toutes clés bloquées
 
 **Formats non supportés :**
 ```
-Input: Film.en.sup.txt (bitmap PGS)
+Input: Film.en.sup.tmp (bitmap PGS)
 → SKIP (nécessite OCR)
 ```
 
@@ -351,11 +454,11 @@ Input: Film.en.sup.txt (bitmap PGS)
 ```bash
 # Terminal 1 - Extractor
 cd extractor/
-docker build -t subtitle-extractor-auto .
+docker build -t subtitle-extractor .
 
 # Terminal 2 - Translator
 cd translator/
-docker build -t subtitle-translator-auto .
+docker build -t subtitle-translator .
 
 # Utiliser le docker-compose à la racine du projet
 ```
@@ -430,11 +533,14 @@ subtitle-automation/
 - ✅ Gestion des **chemins avec caractères spéciaux** (Unicode, tirets, apostrophes)
 - ✅ Les trailers sont **automatiquement ignorés** (nom contenant `-trailer`)
 - ✅ Les films avec sous-titres français sont **automatiquement skippés**
-- ✅ Quotas par modèle indépendants (Flash 3 + Flash 2.5 = cumulatif)
+- ✅ Quotas par modèle indépendants (Flash 2.0 + Flash 1.5 = cumulatif)
 - ✅ Reprise automatique après interruption
 - ✅ Logs avec timestamps (timezone Europe/Paris)
-- ✅ Logs fichier optionnels via `LOG_FILE`
+- ✅ Logs fichier optionnels via `LOG_FILE` avec **rotation automatique**
 - ✅ Messages d'erreur détaillés pour debugging
+- 🆕 **Support multi-folders** pour traiter plusieurs collections simultanément
+- 🆕 **Rétro-compatibilité** avec l'ancien format `SOURCE_FOLDER`
+- 🆕 **Stats agrégées** sur tous les dossiers configurés
 
 ---
 
@@ -465,20 +571,33 @@ Quand `translator.log` atteint 10 MB → rotation automatique.
 
 Les logs sont **compacts et sur une seule ligne** pour faciliter la lecture et réduire l'espace disque :
 
-**Extractor :**
+**Extractor (single-folder) :**
 ```
 [2026-01-01 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
 [2026-01-01 10:00:00] 📂 Dossier: /data | Formats: mkv, mp4, avi | Ignore: trailers
-[2026-01-01 10:00:01] ✅ Film.mkv | Extrait: Film.en.ssa.txt
+[2026-01-01 10:00:01] ✅ Film.mkv | Extrait: Film.en.ssa.tmp
 [2026-01-01 10:00:02] ⏭️ Film2.mkv | Déjà traduit (piste FR dans MKV)
 [2026-01-01 10:00:05] ✅ EXTRACTION TERMINÉE | Total: 10 | Extraits: 5 | Skippés: 3 | Erreurs: 2
 ```
 
-**Translator :**
+**Extractor (multi-folders) :**
+```
+[2026-01-01 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
+[2026-01-01 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: mkv, mp4, avi | Ignore: trailers
+[2026-01-01 10:00:01] 📂 [1/3] Traitement: /media/movies
+[2026-01-01 10:00:02]   ✅ Film1.mkv | Extrait: Film1.en.srt.tmp
+[2026-01-01 10:00:03]   ⭐️ Film2.mkv | Déjà traduit (sous-titre FR externe)
+[2026-01-01 10:00:04] 📂 [2/3] Traitement: /media/series
+[2026-01-01 10:00:05]   ✅ S01E01.mkv | Extrait: S01E01.en.ass.tmp
+[2026-01-01 10:00:10] ✅ EXTRACTION TERMINÉE | Total: 25 | Extraits: 15 | Skippés: 8 | Erreurs: 2
+[2026-01-01 10:00:10] ============================================================
+```
+
+**Translator (single-folder) :**
 ```
 [2026-01-01 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
-[2026-01-01 10:00:00] 📂 Dossier: /data | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-3-flash-preview
-[2026-01-01 10:00:00] 🎬 Film.mkv | Source: Film.en.ssa.txt (1945 lignes) | Converting ASS→SRT
+[2026-01-01 10:00:00] 📂 Dossier: /data | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
+[2026-01-01 10:00:00] 🎬 Film.mkv | Source: Film.en.ssa.tmp (1945 lignes) | Converting ASS→SRT
 [2026-01-01 10:00:15] ⏳ Film.mkv | 1-50/1945 (2.6%) | ETA: ~18m (fin: 10:18)
 [2026-01-01 10:00:30] ⏳ Film.mkv | 51-100/1945 (5.1%) | ETA: ~17m (fin: 10:17)
 ...
@@ -486,11 +605,73 @@ Les logs sont **compacts et sur une seule ligne** pour faciliter la lecture et r
 [2026-01-01 10:17:45] ✅ TRADUCTION TERMINÉE | Total: 1 | Complétés: 1 | Erreurs: 0
 ```
 
+**Translator (multi-folders) :**
+```
+[2026-01-01 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
+[2026-01-01 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
+[2026-01-01 10:00:01] 📂 [1/3] Traitement: /media/movies
+[2026-01-01 10:00:02]   🎬 Film1.mkv | Source: Film1.en.srt.tmp (500 lignes)
+[2026-01-01 10:00:20]   ⏳ Film1.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
+...
+[2026-01-01 10:08:00]   ✅ Film1.mkv | Terminé en 8m 0s | Output: Film1.fr.srt
+[2026-01-01 10:08:01] 📂 [2/3] Traitement: /media/series
+...
+[2026-01-01 10:20:00] ✅ TRADUCTION TERMINÉE | Total: 12 | Complétés: 8 | Déjà faits: 3 | Erreurs: 1
+[2026-01-01 10:20:00] ============================================================
+```
+
 **Avantages :**
 - 📉 **~30% de lignes en moins** par rapport à l'ancien format
 - 🔍 **Facile à grep/filtrer** (tout sur une ligne)
 - 📊 **Statistiques en fin de cycle** (pas de détails intermédiaires)
 - ⚡ **Rapide à lire** (pas de séparateurs ni lignes vides)
+- 🆕 **Indicateur de progression multi-folders** : `[1/3]`, `[2/3]`, etc.
+
+---
+
+## 🔄 Migration vers Multi-Folders
+
+### Pourquoi migrer ?
+
+Le support multi-folders permet de :
+- ✅ Gérer plusieurs collections de médias (films, séries, documentaires)
+- ✅ Centraliser les logs et stats de tous les dossiers
+- ✅ Simplifier la gestion Docker (un seul conteneur au lieu d'un par dossier)
+- ✅ Réduire la consommation de ressources
+
+### Comment migrer ?
+
+**Avant (single-folder) :**
+```yaml
+# .env
+SOURCE_FOLDER=/media/movies
+```
+
+**Après (multi-folders) :**
+```yaml
+# .env
+SOURCE_FOLDERS=["/media/movies", "/media/series", "/media/documentaries"]
+```
+
+**Docker volumes :**
+```yaml
+# docker-compose.yml
+volumes:
+  - /path/to/movies:/media/movies
+  - /path/to/series:/media/series
+  - /path/to/docs:/media/documentaries
+```
+
+### Rétro-compatibilité
+
+Pas besoin de migrer immédiatement ! Les deux formats fonctionnent :
+- **`SOURCE_FOLDER`** : Ancien format, toujours supporté
+- **`SOURCE_FOLDERS`** : Nouveau format, prioritaire si défini
+
+**Migration progressive :**
+1. Tester avec un seul dossier : `SOURCE_FOLDERS=["/media/movies"]`
+2. Ajouter progressivement : `SOURCE_FOLDERS=["/media/movies", "/media/series"]`
+3. Supprimer `SOURCE_FOLDER` une fois validé
 
 ---
 

@@ -13,14 +13,13 @@ from google.genai import types
 from datetime import datetime, timedelta
 
 # ==========================================
-# translate_srt_gemini.py - V6 (Production Ready)
+# translate_srt_gemini.py - V7 (Multi-Folders)
 # ==========================================
-# Nouvelles fonctionnalités V6 :
-# - Support ASS/SSA avec conversion automatique → SRT
-# - Détection formats bitmap (SUP/SUB) non traduisibles
-# - Nettoyage des fichiers .to.srt.tmp après traduction
-# - Naming cohérent : Film.en.ssa.to.srt.tmp
-# - Nécessite ffmpeg dans le Docker
+# Nouvelles fonctionnalités V7 :
+# - Support multi-folders via SOURCE_FOLDERS (JSON array)
+# - Rétro-compatible avec SOURCE_FOLDER (single)
+# - Stats agrégées sur tous les folders
+# - Log du folder en cours de traitement
 # ==========================================
 
 load_dotenv()
@@ -28,7 +27,8 @@ load_dotenv()
 # =========================
 # CONFIG
 # =========================
-SOURCE_FOLDER = os.getenv("SOURCE_FOLDER")
+SOURCE_FOLDERS_JSON = os.getenv("SOURCE_FOLDERS", "[]")
+SOURCE_FOLDER_LEGACY = os.getenv("SOURCE_FOLDER")
 PAUSE_SECONDS = int(os.getenv("PAUSE_SECONDS", 10))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", 50))
 WATCH_MODE = os.getenv("WATCH_MODE", "true").lower() == "true"
@@ -36,6 +36,18 @@ WATCH_INTERVAL = int(os.getenv("WATCH_INTERVAL", 3600))
 LOG_FILE = os.getenv("LOG_FILE", None)  # None = console uniquement
 LOG_FILE_MAX_SIZE_MB = int(os.getenv("LOG_FILE_MAX_SIZE_MB", 10))  # Taille max par fichier (MB)
 LOG_FILE_BACKUP_COUNT = int(os.getenv("LOG_FILE_BACKUP_COUNT", 2))  # Nombre de backups
+
+# Parse SOURCE_FOLDERS
+try:
+    SOURCE_FOLDERS = json.loads(SOURCE_FOLDERS_JSON)
+    if not SOURCE_FOLDERS and SOURCE_FOLDER_LEGACY:
+        # Rétro-compatibilité : si SOURCE_FOLDERS vide, utiliser SOURCE_FOLDER
+        SOURCE_FOLDERS = [SOURCE_FOLDER_LEGACY]
+except json.JSONDecodeError:
+    if SOURCE_FOLDER_LEGACY:
+        SOURCE_FOLDERS = [SOURCE_FOLDER_LEGACY]
+    else:
+        SOURCE_FOLDERS = []
 
 # Variables de nettoyage (défaut: false = on garde tout)
 DELETE_PROGRESS_AFTER = os.getenv("DELETE_PROGRESS_AFTER", "false").lower() == "true"
@@ -575,16 +587,17 @@ def translate_subtitle(video_path):
 
 
 # =========================
-# RUN CYCLE
+# FOLDER PROCESSING
 # =========================
-def run_translation():
-    """Exécution d'un cycle de traduction complet"""
-    if not SOURCE_FOLDER or not os.path.isdir(SOURCE_FOLDER):
-        log("❌ SOURCE_FOLDER manquant ou n'existe pas")
-        return
+def process_folder(folder_path, folder_index, total_folders):
+    """
+    Traite un dossier spécifique et retourne les stats
+    """
+    log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path}")
     
-    log("🚀 DÉBUT DE LA TRADUCTION")
-    log(f"📂 Dossier: {SOURCE_FOLDER} | Formats: SRT, ASS, SSA, VTT | Modèles: {', '.join(MODELS)}")
+    if not os.path.isdir(folder_path):
+        log(f"  ⚠️ Dossier inexistant, ignoré")
+        return None
     
     stats = {
         "total": 0,
@@ -596,7 +609,7 @@ def run_translation():
         "error": 0
     }
     
-    for root, _, files in os.walk(SOURCE_FOLDER):
+    for root, _, files in os.walk(folder_path):
         for file in files:
             if not file.lower().endswith(VIDEO_EXTENSIONS):
                 continue
@@ -620,7 +633,50 @@ def run_translation():
                 stats["error"] += 1
                 stats["total"] += 1
     
-    log(f"✅ TRADUCTION TERMINÉE | Total: {stats['total']} | Complétés: {stats['completed']} | Déjà faits: {stats['already_done']} | Erreurs: {stats['error'] + stats['no_source'] + stats['unsupported_format']}")
+    return stats
+
+
+def merge_stats(global_stats, folder_stats):
+    """Fusionne les stats d'un folder dans les stats globales"""
+    if folder_stats is None:
+        return
+    
+    for key in folder_stats:
+        global_stats[key] += folder_stats[key]
+
+
+# =========================
+# RUN CYCLE
+# =========================
+def run_translation():
+    """Exécution d'un cycle de traduction complet sur tous les folders"""
+    if not SOURCE_FOLDERS:
+        log("❌ Aucun dossier configuré (SOURCE_FOLDERS vide)")
+        log("   Configurez SOURCE_FOLDERS dans .env : SOURCE_FOLDERS=[\"/path/1\", \"/path/2\"]")
+        return
+    
+    log("🚀 DÉBUT DE LA TRADUCTION")
+    log(f"📂 {len(SOURCE_FOLDERS)} dossier(s) configuré(s) | Formats: SRT, ASS, SSA, VTT | Modèles: {', '.join(MODELS)}")
+    
+    # Stats globales
+    global_stats = {
+        "total": 0,
+        "trailers_skipped": 0,
+        "already_done": 0,
+        "completed": 0,
+        "no_source": 0,
+        "unsupported_format": 0,
+        "error": 0
+    }
+    
+    # Traiter chaque folder
+    total_folders = len(SOURCE_FOLDERS)
+    for index, folder in enumerate(SOURCE_FOLDERS, start=1):
+        folder_stats = process_folder(folder, index, total_folders)
+        merge_stats(global_stats, folder_stats)
+    
+    log(f"✅ TRADUCTION TERMINÉE | Total: {global_stats['total']} | Complétés: {global_stats['completed']} | Déjà faits: {global_stats['already_done']} | Erreurs: {global_stats['error'] + global_stats['no_source'] + global_stats['unsupported_format']}")
+    log('='*60)
 
 
 # =========================

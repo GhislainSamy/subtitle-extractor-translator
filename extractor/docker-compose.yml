@@ -1,30 +1,35 @@
 version: '3.8'
 
 services:
+  # =========================================
+  # SUBTITLE EXTRACTOR (Standalone)
+  # =========================================
   subtitle-extractor:
-    build: .
+    image: subtitle-extractor:latest
     container_name: subtitle-extractor
-    restart: unless-stopped
     volumes:
-      # Adapter le chemin vers vos films
-      - /mnt/nas/media/real-films-indien/_Lien_Symbolique-usbshare1/TEST:/data
+      # Multi-folders: monter tous les dossiers à scanner
+      - /mnt/nas/media/films:/media/movies
+      - /mnt/nas/media/series:/media/series
+      - /mnt/nas/media/documentaires:/media/documentaries
+      
+      # Volume pour les logs (optionnel, peut aussi être dans un des dossiers ci-dessus)
+      - /docker/subtitle-extractor-translator/extractor/logs:/app/logs
     environment:
-      # Mode agent (true) ou exécution unique (false)
+      # 🆕 Multi-Folders Support
+      # Configuration JSON array avec les 3 dossiers
+      - SOURCE_FOLDERS=["/media/movies", "/media/series", "/media/documentaries"]
+      
+      # Mode agent continu
       - WATCH_MODE=true
       
-      # Intervalle de vérification en secondes
-      # 3600 = 1 heure
-      # 21600 = 6 heures
-      # 86400 = 24 heures
+      # Intervalle de vérification (secondes)
+      # 3600 = 1h, 21600 = 6h, 86400 = 24h
       - WATCH_INTERVAL=3600
       
-      # Dossier source (monté dans le container)
-      - SOURCE_FOLDER=/data
-
-      # Fichier de log (optionnel)
-      # Laissez commenté pour log console uniquement
+      # 📝 Logs activés avec rotation automatique
+      - LOG_FILE=/app/logs/extractor.log
+      - LOG_FILE_MAX_SIZE_MB=10        # Taille max par fichier (MB)
+      - LOG_FILE_BACKUP_COUNT=2        # Nombre de backups (total = 3 fichiers)
       
-      # Activer le log
-      - LOG_FILE=/data/extractor.log
-      - LOG_FILE_MAX_SIZE_MB = 10  # Taille max par fichier (MB)
-      - LOG_FILE_BACKUP_COUNT = 2  # Nombre de backups (total = backup + 1)
+    restart: unless-stopped

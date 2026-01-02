@@ -7,20 +7,37 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 # ==========================================
-# extract_subtitle_en.py - V9 (Docker Ready)
+# extract_subtitle_en.py - V10 (Multi-Folders)
 # ==========================================
-# Ajout détection sous-titres FR :
-# - Skip si piste sous-titre FR dans MKV
-# - Skip si fichier externe FR existe
+# Nouvelles fonctionnalités V10 :
+# - Support multi-folders via SOURCE_FOLDERS (JSON array)
+# - Rétro-compatible avec SOURCE_FOLDER (single)
+# - Stats agrégées sur tous les folders
+# - Log du folder en cours de traitement
 # ==========================================
 
 load_dotenv()
-SOURCE_FOLDER = os.getenv("SOURCE_FOLDER")
+
+# Configuration multi-folders
+SOURCE_FOLDERS_JSON = os.getenv("SOURCE_FOLDERS", "[]")
+SOURCE_FOLDER_LEGACY = os.getenv("SOURCE_FOLDER")
 WATCH_MODE = os.getenv("WATCH_MODE", "true").lower() == "true"
 WATCH_INTERVAL = int(os.getenv("WATCH_INTERVAL", 3600))  # défaut: 1h
 LOG_FILE = os.getenv("LOG_FILE", None)  # None = console uniquement
 LOG_FILE_MAX_SIZE_MB = int(os.getenv("LOG_FILE_MAX_SIZE_MB", 10))  # Taille max par fichier (MB)
 LOG_FILE_BACKUP_COUNT = int(os.getenv("LOG_FILE_BACKUP_COUNT", 2))  # Nombre de backups
+
+# Parse SOURCE_FOLDERS
+try:
+    SOURCE_FOLDERS = json.loads(SOURCE_FOLDERS_JSON)
+    if not SOURCE_FOLDERS and SOURCE_FOLDER_LEGACY:
+        # Rétro-compatibilité : si SOURCE_FOLDERS vide, utiliser SOURCE_FOLDER
+        SOURCE_FOLDERS = [SOURCE_FOLDER_LEGACY]
+except json.JSONDecodeError:
+    if SOURCE_FOLDER_LEGACY:
+        SOURCE_FOLDERS = [SOURCE_FOLDER_LEGACY]
+    else:
+        SOURCE_FOLDERS = []
 
 # Extensions vidéo supportées
 VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".flv", ".wmv")
@@ -273,12 +290,12 @@ def process_video_file(video_path):
     
     # 1. Vérifier si fichier FR externe existe
     if find_french_subtitle(base):
-        log(f"⏭️ {video_name} | Déjà traduit (sous-titre FR externe)")
+        log(f"⭐️ {video_name} | Déjà traduit (sous-titre FR externe)")
         return "french_external"
     
     # 2. Vérifier si piste sous-titre FR dans le MKV
     if is_mkv and has_french_subtitle_in_mkv(video_path):
-        log(f"⏭️ {video_name} | Déjà traduit (piste FR dans MKV)")
+        log(f"⭐️ {video_name} | Déjà traduit (piste FR dans MKV)")
         return "french_in_mkv"
     
     # 3. Vérifier si fichier EN externe existe
@@ -310,14 +327,15 @@ def process_video_file(video_path):
         return "no_source"
 
 
-def run_extraction():
-    """Exécution d'un cycle d'extraction complet"""
-    if not SOURCE_FOLDER or not os.path.isdir(SOURCE_FOLDER):
-        log("❌ SOURCE_FOLDER manquant ou n'existe pas dans .env")
-        return
+def process_folder(folder_path, folder_index, total_folders):
+    """
+    Traite un dossier spécifique et retourne les stats
+    """
+    log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path}")
     
-    log("🚀 DÉBUT DE L'EXTRACTION")
-    log(f"📂 Dossier: {SOURCE_FOLDER} | Formats: {', '.join(VIDEO_EXTENSIONS)} | Ignore: trailers")
+    if not os.path.isdir(folder_path):
+        log(f"  ⚠️ Dossier inexistant, ignoré")
+        return None
     
     stats = {
         "total": 0,
@@ -331,7 +349,7 @@ def run_extraction():
         "no_source": 0
     }
     
-    for root, _, files in os.walk(SOURCE_FOLDER):
+    for root, _, files in os.walk(folder_path):
         for file in files:
             # Vérifier l'extension
             if not file.lower().endswith(VIDEO_EXTENSIONS):
@@ -368,17 +386,58 @@ def run_extraction():
                 stats["failed"] += 1
                 stats["total"] += 1
     
-    # Stats compactes
-    french_total = stats["french_external"] + stats["french_in_mkv"]
-    skipped = stats["trailers_skipped"] + french_total + stats["external_found"] + stats["already_extracted"]
+    return stats
+
+
+def merge_stats(global_stats, folder_stats):
+    """Fusionne les stats d'un folder dans les stats globales"""
+    if folder_stats is None:
+        return
     
-    log(f"✅ EXTRACTION TERMINÉE | Total: {stats['total']} | Extraits: {stats['mkv_extracted']} | Skippés: {skipped} | Erreurs: {stats['failed'] + stats['no_source']}")
-    if stats["failed"] > 0:
-        log(f"  ❌ Extraction échouée : {stats['failed']}")
-    if stats["no_source"] > 0:
-        log(f"  ⚠️ Aucune source trouvée : {stats['no_source']}")
-    if stats["trailers_skipped"] > 0:
-        log(f"  🚫 Trailers ignorés : {stats['trailers_skipped']}")
+    for key in folder_stats:
+        global_stats[key] += folder_stats[key]
+
+
+def run_extraction():
+    """Exécution d'un cycle d'extraction complet sur tous les folders"""
+    if not SOURCE_FOLDERS:
+        log("❌ Aucun dossier configuré (SOURCE_FOLDERS vide)")
+        log("   Configurez SOURCE_FOLDERS dans .env : SOURCE_FOLDERS=[\"/path/1\", \"/path/2\"]")
+        return
+    
+    log("🚀 DÉBUT DE L'EXTRACTION")
+    log(f"📂 {len(SOURCE_FOLDERS)} dossier(s) configuré(s) | Formats: {', '.join(VIDEO_EXTENSIONS)} | Ignore: trailers")
+    
+    # Stats globales
+    global_stats = {
+        "total": 0,
+        "trailers_skipped": 0,
+        "french_external": 0,
+        "french_in_mkv": 0,
+        "external_found": 0,
+        "already_extracted": 0,
+        "mkv_extracted": 0,
+        "failed": 0,
+        "no_source": 0
+    }
+    
+    # Traiter chaque folder
+    total_folders = len(SOURCE_FOLDERS)
+    for index, folder in enumerate(SOURCE_FOLDERS, start=1):
+        folder_stats = process_folder(folder, index, total_folders)
+        merge_stats(global_stats, folder_stats)
+    
+    # Stats compactes globales
+    french_total = global_stats["french_external"] + global_stats["french_in_mkv"]
+    skipped = global_stats["trailers_skipped"] + french_total + global_stats["external_found"] + global_stats["already_extracted"]
+    
+    log(f"✅ EXTRACTION TERMINÉE | Total: {global_stats['total']} | Extraits: {global_stats['mkv_extracted']} | Skippés: {skipped} | Erreurs: {global_stats['failed'] + global_stats['no_source']}")
+    if global_stats["failed"] > 0:
+        log(f"  ❌ Extraction échouée : {global_stats['failed']}")
+    if global_stats["no_source"] > 0:
+        log(f"  ⚠️ Aucune source trouvée : {global_stats['no_source']}")
+    if global_stats["trailers_skipped"] > 0:
+        log(f"  🚫 Trailers ignorés : {global_stats['trailers_skipped']}")
     log('='*60)
 
 

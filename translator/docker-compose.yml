@@ -1,53 +1,64 @@
 version: '3.8'
 
 services:
+  # =========================================
+  # SUBTITLE TRANSLATOR (Standalone)
+  # =========================================
   subtitle-translator:
     image: subtitle-translator:latest
     container_name: subtitle-translator
-    restart: unless-stopped
     volumes:
-      # Adapter le chemin vers vos medias
-      - /mnt/nas/media/films:/data
+      # Multi-folders: monter tous les dossiers à traiter
+      - /mnt/nas/media/films:/media/movies
+      - /mnt/nas/media/series:/media/series
+      - /mnt/nas/media/documentaires:/media/documentaries
+      
+      # Volume pour les logs (optionnel)
+      - /docker/subtitle-extractor-translator/translator/logs:/app/logs
     environment:
-      # Mode agent (true) ou exécution unique (false)
+      # 🆕 Multi-Folders Support
+      # Configuration JSON array avec les 3 dossiers
+      - SOURCE_FOLDERS=["/media/movies", "/media/series", "/media/documentaries"]
+      
+      # Mode agent continu
       - WATCH_MODE=true
       
-      # Intervalle de vérification en secondes
-      # 3600 = 1 heure
-      # 21600 = 6 heures
-      # 86400 = 24 heures
+      # Intervalle de vérification (secondes)
+      # 3600 = 1h, 21600 = 6h, 86400 = 24h
       - WATCH_INTERVAL=3600
       
-      # Dossier source (monté dans le container)
-      - SOURCE_FOLDER=/data
-
-      # Fichier de log (optionnel)
-      # Laissez commenté pour log console uniquement
+      # 📝 Logs activés avec rotation automatique
+      - LOG_FILE=/app/logs/translator.log
+      - LOG_FILE_MAX_SIZE_MB=10        # Taille max par fichier (MB)
+      - LOG_FILE_BACKUP_COUNT=2        # Nombre de backups (total = 3 fichiers)
       
-      # Activer le log
-      - LOG_FILE=/data/translator.log
-      - LOG_FILE_MAX_SIZE_MB = 10  # Taille max par fichier (MB)
-      - LOG_FILE_BACKUP_COUNT = 2  # Nombre de backups (total = backup + 1)
+      # ⚡ Performance optimisée : ~18 minutes pour 1945 lignes
+      - PAUSE_SECONDS=10
+      - BATCH_SIZE=50
+      
+      # 🔑 Clés API Gemini (créer sur https://aistudio.google.com/app/apikey)
+      # IMPORTANT: Remplacer par vos vraies clés !
+      - GEMINI_API_KEYS=["votre-clé-1", "votre-clé-2", "votre-clé-3"]
+      
+      # 🤖 Modèles Gemini avec quotas INDÉPENDANTS
+      # Flash 2.0 (15 RPM, 1000 RPD) + Flash 1.5 (10 RPM, 250 RPD)
+      # = 25 RPM total par clé, 1250 RPD par clé
+      # Avec 3 clés = 75 RPM, 3750 RPD (capacité ~96 films/jour)
+      - GEMINI_MODELS=["gemini-3-flash-preview", "gemini-2.5-flash"]
 
-      # Configuration traduction
-      - PAUSE_SECONDS=30
-      - BATCH_SIZE=10
+      # ⏰ Cooldown si erreur API (secondes)
       - COOLDOWN_SECONDS=3600
       
-      # Clés API Gemini (JSON array)
-      - GEMINI_API_KEYS=["cle1","cle2"]
-      
-      # Modèles Gemini (JSON array)
-      - GEMINI_MODELS=["gemini-3-flash-preview","gemini-2.5-flash"]
-
-      # Variables de nettoyage (défaut: false = on garde tout)
-      # Mettre à true pour activer le nettoyage automatique
+      # 🗑️ Variables de nettoyage (défaut: false = on garde tout)
+      # Mettre à true pour activer le nettoyage automatique en production
       
       # Supprimer .fr.progress.json après traduction ?
       - DELETE_PROGRESS_AFTER=false
       
-      # Supprimer .en.XXX.txt après traduction ?
+      # Supprimer .en.XXX.tmp après traduction ?
       - DELETE_SOURCE_AFTER=false
       
-      # Supprimer .to.srt.txt après traduction ?
+      # Supprimer .to.srt.tmp après traduction ?
       - DELETE_CONVERTED_AFTER=false
+      
+    restart: unless-stopped
