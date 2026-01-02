@@ -18,8 +18,8 @@ from datetime import datetime, timedelta
 # Nouvelles fonctionnalités V6 :
 # - Support ASS/SSA avec conversion automatique → SRT
 # - Détection formats bitmap (SUP/SUB) non traduisibles
-# - Nettoyage des fichiers .to.srt.txt après traduction
-# - Naming cohérent : Film.en.ssa.to.srt.txt
+# - Nettoyage des fichiers .to.srt.tmp après traduction
+# - Naming cohérent : Film.en.ssa.to.srt.tmp
 # - Nécessite ffmpeg dans le Docker
 # ==========================================
 
@@ -269,30 +269,30 @@ def convert_to_srt_if_needed(subtitle_file):
     Retourne (fichier_srt, needs_cleanup)
     """
     # Déjà SRT → pas de conversion
-    if '.srt.txt' in subtitle_file or subtitle_file.endswith('.srt'):
+    if '.srt.tmp' in subtitle_file or subtitle_file.endswith('.srt'):
         return subtitle_file, False
     
     # Formats bitmap → impossible
-    if any(ext in subtitle_file for ext in ['.sup.txt', '.sub.txt']):
+    if any(ext in subtitle_file for ext in ['.sup.tmp', '.sub.tmp']):
         return None, False
     
     # Besoin conversion
-    if '.ass.txt' in subtitle_file:
-        temp_srt = subtitle_file.replace('.ass.txt', '.ass.to.srt.txt')
-    elif '.ssa.txt' in subtitle_file:
-        temp_srt = subtitle_file.replace('.ssa.txt', '.ssa.to.srt.txt')
-    elif '.vtt.txt' in subtitle_file:
-        temp_srt = subtitle_file.replace('.vtt.txt', '.vtt.to.srt.txt')
+    if '.ass.tmp' in subtitle_file:
+        temp_srt = subtitle_file.replace('.ass.tmp', '.ass.to.srt.tmp')
+    elif '.ssa.tmp' in subtitle_file:
+        temp_srt = subtitle_file.replace('.ssa.tmp', '.ssa.to.srt.tmp')
+    elif '.vtt.tmp' in subtitle_file:
+        temp_srt = subtitle_file.replace('.vtt.tmp', '.vtt.to.srt.tmp')
     elif subtitle_file.endswith('.ass'):
-        temp_srt = subtitle_file.replace('.ass', '.ass.to.srt.txt')
+        temp_srt = subtitle_file.replace('.ass', '.ass.to.srt.tmp')
     elif subtitle_file.endswith('.ssa'):
-        temp_srt = subtitle_file.replace('.ssa', '.ssa.to.srt.txt')
+        temp_srt = subtitle_file.replace('.ssa', '.ssa.to.srt.tmp')
     elif subtitle_file.endswith('.vtt'):
-        temp_srt = subtitle_file.replace('.vtt', '.vtt.to.srt.txt')
+        temp_srt = subtitle_file.replace('.vtt', '.vtt.to.srt.tmp')
     else:
         # Autre format
         base = subtitle_file.rsplit('.', 1)[0]
-        temp_srt = f"{base}.to.srt.txt"
+        temp_srt = f"{base}.to.srt.tmp"
     
     # Convertir avec ffmpeg si pas déjà fait
     if not os.path.exists(temp_srt):
@@ -308,9 +308,9 @@ def convert_to_srt_if_needed(subtitle_file):
             
             # Déterminer le format d'entrée
             input_format = None
-            if '.ass.txt' in subtitle_file or '.ssa.txt' in subtitle_file:
+            if '.ass.tmp' in subtitle_file or '.ssa.tmp' in subtitle_file:
                 input_format = 'ass'  # Force format ASS/SSA
-            elif '.vtt.txt' in subtitle_file:
+            elif '.vtt.tmp' in subtitle_file:
                 input_format = 'webvtt'
             
             # Construire la commande ffmpeg
@@ -344,12 +344,12 @@ def convert_to_srt_if_needed(subtitle_file):
 
 
 def cleanup_converted_files(base_path):
-    """Supprime tous les fichiers .to.srt.txt si DELETE_CONVERTED_AFTER=true"""
+    """Supprime tous les fichiers .to.srt.tmp si DELETE_CONVERTED_AFTER=true"""
     if not DELETE_CONVERTED_AFTER:
         return
     
     for ext in SUBTITLE_EXTENSIONS:
-        converted = f"{base_path}.en.{ext}.to.srt.txt"
+        converted = f"{base_path}.en.{ext}.to.srt.tmp"
         if os.path.exists(converted):
             os.remove(converted)
 
@@ -379,12 +379,12 @@ def delete_progress(path):
 
 
 def delete_extracted_subtitle(base_path):
-    """Supprime les fichiers .en.XXX.txt (fichiers extraits du MKV) si DELETE_SOURCE_AFTER=true"""
+    """Supprime les fichiers .en.XXX.tmp (fichiers extraits du MKV) si DELETE_SOURCE_AFTER=true"""
     if not DELETE_SOURCE_AFTER:
         return False
     
     for ext in SUBTITLE_EXTENSIONS:
-        extracted_file = f"{base_path}.en.{ext}.txt"
+        extracted_file = f"{base_path}.en.{ext}.tmp"
         if os.path.isfile(extracted_file):
             os.remove(extracted_file)
             return True
@@ -396,9 +396,9 @@ def delete_extracted_subtitle(base_path):
 # =========================
 def find_english_subtitle(base_path):
     """Cherche un fichier source anglais dans l'ordre de priorité"""
-    # Priorité 1 : fichiers extraits .en.XXX.txt
+    # Priorité 1 : fichiers extraits .en.XXX.tmp
     for ext in SUBTITLE_EXTENSIONS:
-        extracted_file = f"{base_path}.en.{ext}.txt"
+        extracted_file = f"{base_path}.en.{ext}.tmp"
         if os.path.isfile(extracted_file):
             return extracted_file
     

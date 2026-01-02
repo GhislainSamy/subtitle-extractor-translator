@@ -129,11 +129,11 @@ def find_external_subtitle(base_path):
 
 def find_extracted_subtitle(base_path):
     """
-    Cherche un fichier .en.XXX.txt déjà extrait
+    Cherche un fichier .en.XXX.tmp déjà extrait
     Retourne le chemin du fichier trouvé ou None
     """
     for ext in SUBTITLE_EXTENSIONS:
-        extracted_file = f"{base_path}.en.{ext}.txt"
+        extracted_file = f"{base_path}.en.{ext}.tmp"
         if os.path.isfile(extracted_file):
             return extracted_file
     return None
@@ -182,7 +182,6 @@ def has_french_subtitle_in_mkv(mkv_path):
         )
         
         if is_french:
-            log(f"  🇫🇷 Piste sous-titre FR détectée : track {track['id']} | lang={lang} | name={name}")
             return True
     
     return False
@@ -190,7 +189,7 @@ def has_french_subtitle_in_mkv(mkv_path):
 
 def extract_from_mkv(mkv_path, base_path):
     """
-    Extrait le sous-titre anglais du MKV vers un fichier .en.FORMAT.txt
+    Extrait le sous-titre anglais du MKV vers un fichier .en.FORMAT.tmp
     Retourne True si extraction réussie, False sinon
     """
     tracks = get_tracks(mkv_path)
@@ -207,14 +206,6 @@ def extract_from_mkv(mkv_path, base_path):
         lang = (props.get("language") or "").lower()
         name = (props.get("track_name") or "").lower()
         
-        # DEBUG
-        log(
-            f"  track {track['id']} | "
-            f"lang={lang or '∅'} | "
-            f"name={name or '∅'} | "
-            f"codec={track.get('codec')}"
-        )
-        
         is_english = (
             lang in ("en", "eng", "und") or
             "english" in name
@@ -224,7 +215,6 @@ def extract_from_mkv(mkv_path, base_path):
             subtitle_tracks.append(track)
     
     if not subtitle_tracks:
-        log("  ℹ️ aucun sous-titre anglais dans le MKV")
         return False
     
     track = subtitle_tracks[0]
@@ -246,7 +236,7 @@ def extract_from_mkv(mkv_path, base_path):
         format_ext = "srt"  # Fallback (SubRip, S_TEXT/UTF8)
     
     temp_file = f"{base_path}.temp.{format_ext}"
-    out_file = f"{base_path}.en.{format_ext}.txt"
+    out_file = f"{base_path}.en.{format_ext}.tmp"
     
     try:
         # Extraire vers un fichier temporaire
@@ -256,7 +246,7 @@ def extract_from_mkv(mkv_path, base_path):
             capture_output=True
         )
         
-        # Renommer en .en.FORMAT.txt
+        # Renommer en .en.FORMAT.tmp
         shutil.move(temp_file, out_file)
         return True
         
@@ -273,8 +263,8 @@ def process_video_file(video_path):
     1. Fichier FR externe existe → skip (déjà traduit)
     2. Piste sous-titre FR dans MKV → skip (déjà traduit)
     3. Fichier EN externe existe → skip (source dispo)
-    4. Fichier .en.XXX.txt déjà extrait → skip
-    5. MKV → extraction piste EN → .en.FORMAT.txt
+    4. Fichier .en.XXX.tmp déjà extrait → skip
+    5. MKV → extraction piste EN → .en.FORMAT.tmp
     6. Pas MKV → erreur
     """
     base, ext = os.path.splitext(video_path)
@@ -387,8 +377,8 @@ def run_extraction():
         log(f"  ❌ Extraction échouée : {stats['failed']}")
     if stats["no_source"] > 0:
         log(f"  ⚠️ Aucune source trouvée : {stats['no_source']}")
-  #  if stats["trailers_skipped"] > 0:
-  #      log(f"  🚫 Trailers ignorés : {stats['trailers_skipped']}")
+    if stats["trailers_skipped"] > 0:
+        log(f"  🚫 Trailers ignorés : {stats['trailers_skipped']}")
     log('='*60)
 
 

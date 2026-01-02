@@ -29,9 +29,14 @@ Résultat final :
   - Pas de doublons dans le lecteur
 ```
 
-### Pourquoi les fichiers .en.XXX.txt ?
+### Pourquoi les fichiers .en.XXX.tmp ?
 
-Lorsqu'un MKV contient déjà une piste de sous-titres anglais intégrée, extraire en `.en.srt` créerait un doublon visible dans les lecteurs vidéo. L'extension `.txt` rend le fichier invisible pour les lecteurs tout en permettant la traduction, puis il est automatiquement supprimé une fois le `.fr.srt` créé.
+Lorsqu'un MKV contient déjà une piste de sous-titres anglais intégrée, extraire en `.en.srt` créerait un doublon visible dans les lecteurs vidéo comme **Plex, Jellyfin, Emby**, etc.
+
+L'extension `.tmp` :
+- ✅ Rend le fichier **invisible** pour les lecteurs média (pas détecté comme sous-titre)
+- ✅ Permet la traduction par le script translator
+- ✅ Est **automatiquement supprimée** une fois le `.fr.srt` créé (si `DELETE_SOURCE_AFTER=true`)
 
 ### Support des formats ASS/SSA
 
