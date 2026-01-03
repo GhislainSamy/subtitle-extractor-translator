@@ -1,0 +1,22 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build extractor Docker image
+        run: docker build -t subtitle-extractor .
+        working-directory: subtitle-extractor-translator/extractor
+
+      - name: Build translator Docker image
+        run: docker build -t subtitle-translator .
+        working-directory: subtitle-extractor-translator/translator
