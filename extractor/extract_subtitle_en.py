@@ -274,7 +274,7 @@ def extract_from_mkv(mkv_path, base_path):
         return False
 
 
-def process_video_file(video_path):
+def process_video_file(video_path, file_index=0, total_files=0):
     """
     Processus principal avec détection FR :
     1. Fichier FR externe existe → skip (déjà traduit)
@@ -288,42 +288,51 @@ def process_video_file(video_path):
     video_name = os.path.basename(video_path)
     is_mkv = ext.lower() == ".mkv"
     
+    # Calculer le pourcentage de progression dans le dossier
+    folder_progress = ""
+    if file_index > 0 and total_files > 0:
+        percentage = (file_index / total_files) * 100
+        folder_progress = f"[{file_index}/{total_files} - {percentage:.2f}%] "
+    
     # 1. Vérifier si fichier FR externe existe
     if find_french_subtitle(base):
-        log(f"⭐️ {video_name} | Déjà traduit (sous-titre FR externe)")
+        log(f"⭐️ {folder_progress}{video_name} | Déjà traduit (sous-titre FR externe)")
         return "french_external"
     
     # 2. Vérifier si piste sous-titre FR dans le MKV
     if is_mkv and has_french_subtitle_in_mkv(video_path):
-        log(f"⭐️ {video_name} | Déjà traduit (piste FR dans MKV)")
+        log(f"⭐️ {folder_progress}{video_name} | Déjà traduit (piste FR dans MKV)")
         return "french_in_mkv"
     
     # 3. Vérifier si fichier EN externe existe
     external_file = find_external_subtitle(base)
     
     if external_file:
-        log(f"✓ {video_name} | Source externe trouvée: {os.path.basename(external_file)}")
+        log(f"✓ {folder_progress}{video_name} | Source externe trouvée: {os.path.basename(external_file)}")
         return "external"
     
     # 4. Vérifier si déjà extrait (.en.XXX.txt)
     extracted = find_extracted_subtitle(base)
     if extracted:
-        log(f"✓ {video_name} | Déjà extrait: {os.path.basename(extracted)}")
+        log(f"✓ {folder_progress}{video_name} | Déjà extrait: {os.path.basename(extracted)}")
         return "extracted"
     
     # 5. Pas de fichier externe → extraire du MKV
     if is_mkv:
+        # Log de début d'extraction
+        log(f"🎬 {folder_progress}{video_name} | Extraction en cours...")
+        
         if extract_from_mkv(video_path, base):
             # Trouver le fichier extrait pour afficher son nom
             extracted = find_extracted_subtitle(base)
             extracted_name = os.path.basename(extracted) if extracted else "fichier"
-            log(f"✅ {video_name} | Extrait: {extracted_name}")
+            log(f"✅ {folder_progress}{video_name} | Extrait: {extracted_name}")
             return "mkv_extracted"
         else:
-            log(f"❌ {video_name} | Pas de piste sous-titre EN dans le MKV")
+            log(f"❌ {folder_progress}{video_name} | Pas de piste sous-titre EN dans le MKV")
             return "failed"
     else:
-        log(f"❌ {video_name} | Pas de source (non-MKV)")
+        log(f"❌ {folder_progress}{video_name} | Pas de source (non-MKV)")
         return "no_source"
 
 
@@ -331,11 +340,22 @@ def process_folder(folder_path, folder_index, total_folders):
     """
     Traite un dossier spécifique et retourne les stats
     """
-    log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path}")
-    
     if not os.path.isdir(folder_path):
+        log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path}")
         log(f"  ⚠️ Dossier inexistant, ignoré")
         return None
+    
+    # Compter le nombre total de fichiers vidéo (sans trailers)
+    total_files = 0
+    for root, _, files in os.walk(folder_path):
+        for file in files:
+            if not file.lower().endswith(VIDEO_EXTENSIONS):
+                continue
+            if is_trailer(file):
+                continue
+            total_files += 1
+    
+    log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path} [{total_files} films au total]")
     
     stats = {
         "total": 0,
@@ -349,6 +369,8 @@ def process_folder(folder_path, folder_index, total_folders):
         "no_source": 0
     }
     
+    current_index = 0
+    
     for root, _, files in os.walk(folder_path):
         for file in files:
             # Vérifier l'extension
@@ -360,10 +382,11 @@ def process_folder(folder_path, folder_index, total_folders):
                 stats["trailers_skipped"] += 1
                 continue
             
+            current_index += 1
             video_path = os.path.join(root, file)
             
             try:
-                result = process_video_file(video_path)
+                result = process_video_file(video_path, current_index, total_files)
                 
                 if result == "french_external":
                     stats["french_external"] += 1
@@ -382,7 +405,8 @@ def process_folder(folder_path, folder_index, total_folders):
                 
                 stats["total"] += 1
             except Exception as e:
-                log(f"❌ {file} | Erreur inattendue: {e}")
+                percentage = (current_index / total_files * 100) if total_files > 0 else 0
+                log(f"❌ [{current_index}/{total_files} - {percentage:.2f}%] {file} | Erreur inattendue: {e}")
                 stats["failed"] += 1
                 stats["total"] += 1
     

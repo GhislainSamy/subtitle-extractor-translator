@@ -138,29 +138,36 @@ Agent d'extraction de sous-titres anglais depuis les fichiers MKV.
 ```
 [2025-01-02 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
 [2025-01-02 10:00:00] 📂 Dossier: /data | Formats: mkv, mp4, avi
-[2025-01-02 10:00:01] ✅ Film.mkv | Extrait: Film.en.srt.tmp
-[2025-01-02 10:00:02] ⭐️ Film2.mkv | Déjà traduit (piste FR dans MKV)
-[2025-01-02 10:00:05] ✅ EXTRACTION TERMINÉE | Total: 2 | Extraits: 1 | Skippés: 1 | Erreurs: 0
+[2025-01-02 10:00:01] ⭐️ [1/3 - 33.33%] Film1.mkv | Déjà traduit (piste FR dans MKV)
+[2025-01-02 10:00:02] 🎬 [2/3 - 66.67%] Film2.mkv | Extraction en cours...
+[2025-01-02 10:00:28] ✅ [2/3 - 66.67%] Film2.mkv | Extrait: Film2.en.srt.tmp
+[2025-01-02 10:00:29] 🎬 [3/3 - 100.00%] Film3.mkv | Extraction en cours...
+[2025-01-02 10:00:47] ✅ [3/3 - 100.00%] Film3.mkv | Extrait: Film3.en.ass.tmp
+[2025-01-02 10:00:48] ✅ EXTRACTION TERMINÉE | Total: 3 | Extraits: 2 | Skippés: 1 | Erreurs: 0
 ```
 
 **Multi-Folders:**
 ```
 [2025-01-02 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
 [2025-01-02 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: mkv, mp4, avi
-[2025-01-02 10:00:01] 📂 [1/3] Traitement: /media/movies
-[2025-01-02 10:00:02]   ✅ Film1.mkv | Extrait: Film1.en.srt.tmp
-[2025-01-02 10:00:03]   ⭐️ Film2.mkv | Déjà traduit (sous-titre FR externe)
-[2025-01-02 10:00:04] 📂 [2/3] Traitement: /media/series
-[2025-01-02 10:00:05]   ✅ S01E01.mkv | Extrait: S01E01.en.ass.tmp
-[2025-01-02 10:00:06]   ✓ S01E02.mkv | Source externe trouvée: S01E02.en.srt
-[2025-01-02 10:00:07] 📂 [3/3] Traitement: /media/documentaries
-[2025-01-02 10:00:08]   ✅ Doc1.mkv | Extrait: Doc1.en.srt.tmp
-[2025-01-02 10:00:09]   ❌ Doc2.mkv | Pas de piste sous-titre EN dans le MKV
-[2025-01-02 10:00:10]   ❌ Doc3.mp4 | Pas de source (non-MKV)
-[2025-01-02 10:00:11] ✅ EXTRACTION TERMINÉE | Total: 7 | Extraits: 4 | Skippés: 2 | Erreurs: 2
-[2025-01-02 10:00:11]   ❌ MKV sans piste EN : 1
-[2025-01-02 10:00:11]   ⚠️ Non-MKV sans source externe : 1
-[2025-01-02 10:00:11] ============================================================
+[2025-01-02 10:00:01] 📂 [1/3] Traitement: /media/movies [300 films au total]
+[2025-01-02 10:00:02]   ⭐️ [1/300 - 0.33%] Film1.mkv | Déjà traduit (sous-titre FR externe)
+[2025-01-02 10:00:03]   🎬 [2/300 - 0.67%] Film2.mkv | Extraction en cours...
+[2025-01-02 10:00:29]   ✅ [2/300 - 0.67%] Film2.mkv | Extrait: Film2.en.srt.tmp
+[2025-01-02 10:00:30]   ✓ [3/300 - 1.00%] Film3.mkv | Source externe trouvée: Film3.en.srt
+[2025-01-02 10:00:31] 📂 [2/3] Traitement: /media/series [150 épisodes au total]
+[2025-01-02 10:00:32]   🎬 [1/150 - 0.67%] S01E01.mkv | Extraction en cours...
+[2025-01-02 10:00:50]   ✅ [1/150 - 0.67%] S01E01.mkv | Extrait: S01E01.en.ass.tmp
+[2025-01-02 10:00:51]   ✓ [2/150 - 1.33%] S01E02.mkv | Source externe trouvée: S01E02.en.srt
+[2025-01-02 10:00:52] 📂 [3/3] Traitement: /media/documentaries [50 documentaires au total]
+[2025-01-02 10:00:53]   🎬 [1/50 - 2.00%] Doc1.mkv | Extraction en cours...
+[2025-01-02 10:01:15]   ✅ [1/50 - 2.00%] Doc1.mkv | Extrait: Doc1.en.srt.tmp
+[2025-01-02 10:01:16]   ❌ [2/50 - 4.00%] Doc2.mkv | Pas de piste sous-titre EN dans le MKV
+[2025-01-02 10:01:17]   ❌ [3/50 - 6.00%] Doc3.mp4 | Pas de source (non-MKV)
+[2025-01-02 10:01:18] ✅ EXTRACTION TERMINÉE | Total: 500 | Extraits: 3 | Skippés: 2 | Erreurs: 2
+[2025-01-02 10:01:18]   ❌ MKV sans piste EN : 1
+[2025-01-02 10:01:18]   ⚠️ Non-MKV sans source externe : 1
+[2025-01-02 10:01:18] ============================================================
 ```
 
 #### 🎯 Scénarios
@@ -291,35 +298,41 @@ Résultat final : uniquement `Film.fr.srt` conservé.
 ```
 [2025-01-02 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
 [2025-01-02 10:00:00] 📂 Dossier: /data | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
-[2025-01-02 10:00:00] 🎬 Film.mkv | Source: Film.en.srt.tmp (1945 lignes)
-[2025-01-02 10:00:00] 🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
-[2025-01-02 10:00:16] ⏳ Film.mkv | 1-50/1945 (2.6%) | ETA: ~18m (fin: 10:18)
-[2025-01-02 10:00:30] ⏳ Film.mkv | 51-100/1945 (5.1%) | ETA: ~17m (fin: 10:17)
+[2025-01-02 10:00:01] 🎬 [1/3 - 33.33%] Film1.mkv | Source: Film1.en.srt.tmp (500 lignes)
+[2025-01-02 10:00:02] 🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
+[2025-01-02 10:00:18] ⏳ [1/3 - 33.33%] Film1.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
 ...
-[2025-01-02 10:17:45] ✅ Film.mkv | Terminé en 17m 45s | Output: Film.fr.srt
-[2025-01-02 10:17:45] ✅ TRADUCTION TERMINÉE | Total: 1 | Complétés: 1 | Déjà faits: 0 | Warnings: 0 | Erreurs: 0
+[2025-01-02 10:08:00] ✅ [1/3 - 33.33%] Film1.mkv | Terminé en 8m 0s | Output: Film1.fr.srt
+[2025-01-02 10:08:01] ⏭️ [2/3 - 66.67%] Film2.mkv | Déjà traduit (Film.fr.srt existe)
+[2025-01-02 10:08:02] 🎬 [3/3 - 100.00%] Film3.mkv | Source: Film3.en.srt.tmp (300 lignes)
+[2025-01-02 10:08:03] 🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
+[2025-01-02 10:08:18] ⏳ [3/3 - 100.00%] Film3.mkv | 1-50/300 (16.7%) | ETA: ~5m (fin: 10:13)
+...
+[2025-01-02 10:14:00] ✅ [3/3 - 100.00%] Film3.mkv | Terminé en 6m 0s | Output: Film3.fr.srt
+[2025-01-02 10:14:01] ✅ TRADUCTION TERMINÉE | Total: 3 | Complétés: 2 | Déjà faits: 1 | Warnings: 0 | Erreurs: 0
 ```
 
 **Multi-Folders:**
 ```
 [2025-01-02 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
 [2025-01-02 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
-[2025-01-02 10:00:01] 📂 [1/3] Traitement: /media/movies
-[2025-01-02 10:00:02]   ⏭️ Film1.mkv | Déjà traduit (Film.fr.srt existe)
-[2025-01-02 10:00:03]   🎬 Film2.mkv | Source: Film2.en.srt.tmp (500 lignes)
+[2025-01-02 10:00:01] 📂 [1/3] Traitement: /media/movies [300 films au total]
+[2025-01-02 10:00:02]   ⏭️ [1/300 - 0.33%] Film1.mkv | Déjà traduit (Film.fr.srt existe)
+[2025-01-02 10:00:03]   🎬 [2/300 - 0.67%] Film2.mkv | Source: Film2.en.srt.tmp (500 lignes)
 [2025-01-02 10:00:04]   🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
-[2025-01-02 10:00:20]   ⏳ Film2.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
+[2025-01-02 10:00:20]   ⏳ [2/300 - 0.67%] Film2.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
 ...
-[2025-01-02 10:08:00]   ✅ Film2.mkv | Terminé en 8m 0s | Output: Film2.fr.srt
-[2025-01-02 10:08:01] 📂 [2/3] Traitement: /media/series
-[2025-01-02 10:08:02]   🎬 S01E01.mkv | Source: S01E01.en.ass.tmp (300 lignes) | Converting ASS→SRT
+[2025-01-02 10:08:00]   ✅ [2/300 - 0.67%] Film2.mkv | Terminé en 8m 0s | Output: Film2.fr.srt
+[2025-01-02 10:08:01] 📂 [2/3] Traitement: /media/series [150 épisodes au total]
+[2025-01-02 10:08:02]   🎬 [1/150 - 0.67%] S01E01.mkv | Source: S01E01.en.ass.tmp (300 lignes) | Converting ASS→SRT
 [2025-01-02 10:08:03]   🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
+[2025-01-02 10:08:20]   ⏳ [1/150 - 0.67%] S01E01.mkv | 1-50/300 (16.7%) | ETA: ~5m (fin: 10:13)
 ...
-[2025-01-02 10:14:00]   ✅ S01E01.mkv | Terminé en 6m 0s | Output: S01E01.fr.srt
-[2025-01-02 10:14:01] 📂 [3/3] Traitement: /media/documentaries
-[2025-01-02 10:14:02]   ⚠️ Doc1.mkv | Rien à traiter
-[2025-01-02 10:14:03]   ⚠️ Doc2.mkv | Format bitmap (SUP/SUB) non supporté sans OCR
-[2025-01-02 10:14:04] ✅ TRADUCTION TERMINÉE | Total: 5 | Complétés: 2 | Déjà faits: 1 | Warnings: 2 | Erreurs: 0
+[2025-01-02 10:14:00]   ✅ [1/150 - 0.67%] S01E01.mkv | Terminé en 6m 0s | Output: S01E01.fr.srt
+[2025-01-02 10:14:01] 📂 [3/3] Traitement: /media/documentaries [50 documentaires au total]
+[2025-01-02 10:14:02]   ⚠️ [1/50 - 2.00%] Doc1.mkv | Rien à traiter
+[2025-01-02 10:14:03]   ⚠️ [2/50 - 4.00%] Doc2.mkv | Format bitmap (SUP/SUB) non supporté sans OCR
+[2025-01-02 10:14:04] ✅ TRADUCTION TERMINÉE | Total: 500 | Complétés: 1 | Déjà faits: 1 | Warnings: 2 | Erreurs: 0
 [2025-01-02 10:14:04]   ⚠️ Warnings :
 [2025-01-02 10:14:04]     - Rien à traiter : 1
 [2025-01-02 10:14:04]     - Format non supporté (SUP/SUB) : 1
@@ -511,28 +524,30 @@ Les logs sont **compacts et sur une seule ligne** pour faciliter la lecture et r
 ```
 [2026-01-01 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
 [2026-01-01 10:00:00] 📂 Dossier: /data | Formats: mkv, mp4, avi
-[2026-01-01 10:00:01] ✅ Film.mkv | Extrait: Film.en.ssa.tmp
-[2026-01-01 10:00:02] ⏭️ Film2.mkv | Déjà traduit (piste FR dans MKV)
-[2026-01-01 10:00:03] ❌ Film3.mkv | Pas de piste sous-titre EN dans le MKV
-[2026-01-01 10:00:05] ✅ EXTRACTION TERMINÉE | Total: 10 | Extraits: 5 | Skippés: 3 | Erreurs: 2
-[2026-01-01 10:00:05]   ❌ MKV sans piste EN : 1
-[2026-01-01 10:00:05]   ⚠️ Non-MKV sans source externe : 1
+[2026-01-01 10:00:01] 🎬 Film1.mkv | Extraction en cours...
+[2026-01-01 10:00:27] ✅ Film1.mkv | Extrait: Film.en.ssa.tmp
+[2026-01-01 10:00:28] ⏭️ Film2.mkv | Déjà traduit (piste FR dans MKV)
+[2026-01-01 10:00:29] ❌ Film3.mkv | Pas de piste sous-titre EN dans le MKV
+[2026-01-01 10:00:30] ✅ EXTRACTION TERMINÉE | Total: 10 | Extraits: 5 | Skippés: 3 | Erreurs: 2
+[2026-01-01 10:00:30]   ❌ MKV sans piste EN : 1
+[2026-01-01 10:00:30]   ⚠️ Non-MKV sans source externe : 1
 ```
 
 **Extractor (multi-folders):**
 ```
 [2026-01-01 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
 [2026-01-01 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: mkv, mp4, avi
-[2026-01-01 10:00:01] 📂 [1/3] Traitement: /media/movies
-[2026-01-01 10:00:02]   ✅ Film1.mkv | Extrait: Film1.en.srt.tmp
-[2026-01-01 10:00:03]   ⭐️ Film2.mkv | Déjà traduit (sous-titre FR externe)
-[2026-01-01 10:00:04] 📂 [2/3] Traitement: /media/series
-[2026-01-01 10:00:05]   ✅ S01E01.mkv | Extrait: S01E01.en.ass.tmp
-[2026-01-01 10:00:06]   ❌ S01E02.mkv | Pas de piste sous-titre EN dans le MKV
-[2026-01-01 10:00:10] ✅ EXTRACTION TERMINÉE | Total: 25 | Extraits: 15 | Skippés: 8 | Erreurs: 2
-[2026-01-01 10:00:10]   ❌ MKV sans piste EN : 1
-[2026-01-01 10:00:10]   ⚠️ Non-MKV sans source externe : 1
-[2026-01-01 10:00:10] ============================================================
+[2026-01-01 10:00:01] 📂 [1/3] Traitement: /media/movies [300 films au total]
+[2026-01-01 10:00:02]   🎬 [1/300 - 0.33%] Film1.mkv | Extraction en cours...
+[2026-01-01 10:00:28]   ✅ [1/300 - 0.33%] Film1.mkv | Extrait: Film1.en.srt.tmp
+[2026-01-01 10:00:29]   ⭐️ [2/300 - 0.67%] Film2.mkv | Déjà traduit (sous-titre FR externe)
+[2026-01-01 10:00:30] 📂 [2/3] Traitement: /media/series [150 épisodes au total]
+[2026-01-01 10:00:31]   🎬 [1/150 - 0.67%] S01E01.mkv | Extraction en cours...
+[2026-01-01 10:00:49]   ✅ [1/150 - 0.67%] S01E01.mkv | Extrait: S01E01.en.ass.tmp
+[2026-01-01 10:00:50]   ❌ [2/150 - 1.33%] S01E02.mkv | Pas de piste sous-titre EN dans le MKV
+[2026-01-01 10:00:51] ✅ EXTRACTION TERMINÉE | Total: 450 | Extraits: 2 | Skippés: 1 | Erreurs: 1
+[2026-01-01 10:00:51]   ❌ MKV sans piste EN : 1
+[2026-01-01 10:00:51] ============================================================
 ```
 
 **Translator (single-folder):**
@@ -551,16 +566,16 @@ Les logs sont **compacts et sur une seule ligne** pour faciliter la lecture et r
 ```
 [2026-01-01 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
 [2026-01-01 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
-[2026-01-01 10:00:01] 📂 [1/3] Traitement: /media/movies
-[2026-01-01 10:00:02]   🎬 Film1.mkv | Source: Film1.en.srt.tmp (500 lignes)
-[2026-01-01 10:00:20]   ⏳ Film1.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
+[2026-01-01 10:00:01] 📂 [1/3] Traitement: /media/movies [300 films au total]
+[2026-01-01 10:00:02]   🎬 [1/300 - 0.33%] Film1.mkv | Source: Film1.en.srt.tmp (500 lignes)
+[2026-01-01 10:00:20]   ⏳ [1/300 - 0.33%] Film1.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
 ...
-[2026-01-01 10:08:00]   ✅ Film1.mkv | Terminé en 8m 0s | Output: Film1.fr.srt
-[2026-01-01 10:08:01] 📂 [2/3] Traitement: /media/series
-[2026-01-01 10:08:02]   ⚠️ S01E01.mkv | Rien à traiter
-[2026-01-01 10:08:03]   ⚠️ S01E02.mkv | Format bitmap (SUP/SUB) non supporté sans OCR
+[2026-01-01 10:08:00]   ✅ [1/300 - 0.33%] Film1.mkv | Terminé en 8m 0s | Output: Film1.fr.srt
+[2026-01-01 10:08:01] 📂 [2/3] Traitement: /media/series [150 épisodes au total]
+[2026-01-01 10:08:02]   ⚠️ [1/150 - 0.67%] S01E01.mkv | Rien à traiter
+[2026-01-01 10:08:03]   ⚠️ [2/150 - 1.33%] S01E02.mkv | Format bitmap (SUP/SUB) non supporté sans OCR
 ...
-[2026-01-01 10:20:00] ✅ TRADUCTION TERMINÉE | Total: 12 | Complétés: 8 | Déjà faits: 2 | Warnings: 2 | Erreurs: 0
+[2026-01-01 10:20:00] ✅ TRADUCTION TERMINÉE | Total: 450 | Complétés: 1 | Déjà faits: 0 | Warnings: 2 | Erreurs: 0
 [2026-01-01 10:20:00]   ⚠️ Warnings :
 [2026-01-01 10:20:00]     - Rien à traiter : 1
 [2026-01-01 10:20:00]     - Format non supporté (SUP/SUB) : 1
@@ -573,6 +588,9 @@ Les logs sont **compacts et sur une seule ligne** pour faciliter la lecture et r
 - 📊 **Statistiques en fin de cycle** (pas de détails intermédiaires)
 - ⚡ **Rapide à lire** (pas de séparateurs ni lignes vides)
 - ✅ **Indicateur de progression multi-folders** : `[1/3]`, `[2/3]`, etc.
+- ✅ **Progression par fichier** : `[1/300 - 0.33%]` pour suivre l'avancement dans chaque dossier
+- ✅ **Log de début d'extraction** : `🎬 Extraction en cours...` pour éviter l'impression de blocage
+- ✅ **Séparation warnings/erreurs** : statistiques claires et précises
 
 ---
 
