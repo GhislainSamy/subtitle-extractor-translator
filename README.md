@@ -9,6 +9,9 @@ Ce projet combine deux agents Docker qui travaillent en tandem :
 1. **🎯 Subtitle Extractor** : Extrait les sous-titres anglais des pistes MKV
 2. **🌐 Subtitle Translator** : Traduit automatiquement EN → FR avec Google Gemini API
 
+#### 🚀 Démarrage rapide
+Prenez le fichier docker-compose situé à la racine du projet et configurez correctement les volumes et les variables en vous basant sur les exemples fournis.
+
 ### Multi-Folders Support
 
 Les deux agents supportent le **traitement de plusieurs dossiers simultanément** :

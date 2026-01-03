@@ -5,7 +5,7 @@ services:
   # SUBTITLE EXTRACTOR
   # =========================================
   subtitle-extractor:
-    image: subtitle-extractor:latest
+    image: ghcr.io/ghislainsamy/subtitle-extractor-translator/extractor:latest
     container_name: subtitle-extractor
     volumes:
       # Multi-folders: monter tous les dossiers
@@ -38,7 +38,7 @@ services:
   # SUBTITLE TRANSLATOR
   # =========================================
   subtitle-translator:
-    image: subtitle-translator:latest
+    image: ghcr.io/ghislainsamy/subtitle-extractor-translator/translator:latest
     container_name: subtitle-translator
     volumes:
       # Multi-folders: monter les mêmes dossiers que l'extractor
