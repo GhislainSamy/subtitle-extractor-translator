@@ -465,14 +465,14 @@ def translate_subtitle(video_path):
     source_file = find_english_subtitle(base)
     
     if not source_file:
-        log(f"❌ {video_name} | Aucune source anglaise trouvée")
+        log(f"⚠️ {video_name} | Rien à traiter")
         return "no_source"
     
     # 3. Convertir en SRT si nécessaire
     srt_file, needs_cleanup = convert_to_srt_if_needed(source_file)
     
     if not srt_file:
-        log(f"❌ {video_name} | Format bitmap (image) non traduisible sans OCR")
+        log(f"⚠️ {video_name} | Format bitmap (SUP/SUB) non supporté sans OCR")
         return "unsupported_format"
     
     # 4. Charger le fichier SRT
@@ -675,7 +675,26 @@ def run_translation():
         folder_stats = process_folder(folder, index, total_folders)
         merge_stats(global_stats, folder_stats)
     
-    log(f"✅ TRADUCTION TERMINÉE | Total: {global_stats['total']} | Complétés: {global_stats['completed']} | Déjà faits: {global_stats['already_done']} | Erreurs: {global_stats['error'] + global_stats['no_source'] + global_stats['unsupported_format']}")
+    # Calculer warnings et erreurs
+    warnings = global_stats['no_source'] + global_stats['unsupported_format']
+    errors = global_stats['error']
+    
+    # Log principal
+    log(f"✅ TRADUCTION TERMINÉE | Total: {global_stats['total']} | Complétés: {global_stats['completed']} | Déjà faits: {global_stats['already_done']} | Warnings: {warnings} | Erreurs: {errors}")
+    
+    # Détails warnings (si > 0)
+    if warnings > 0:
+        log(f"  ⚠️ Warnings :")
+        if global_stats['no_source'] > 0:
+            log(f"    - Rien à traiter : {global_stats['no_source']}")
+        if global_stats['unsupported_format'] > 0:
+            log(f"    - Format non supporté (SUP/SUB) : {global_stats['unsupported_format']}")
+    
+    # Détails erreurs (si > 0)
+    if errors > 0:
+        log(f"  ❌ Erreurs :")
+        log(f"    - Erreurs de traduction : {errors}")
+    
     log('='*60)
 
 

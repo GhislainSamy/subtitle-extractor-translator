@@ -320,7 +320,7 @@ def process_video_file(video_path):
             log(f"✅ {video_name} | Extrait: {extracted_name}")
             return "mkv_extracted"
         else:
-            log(f"❌ {video_name} | Échec extraction MKV")
+            log(f"❌ {video_name} | Pas de piste sous-titre EN dans le MKV")
             return "failed"
     else:
         log(f"❌ {video_name} | Pas de source (non-MKV)")
@@ -401,12 +401,16 @@ def merge_stats(global_stats, folder_stats):
 def run_extraction():
     """Exécution d'un cycle d'extraction complet sur tous les folders"""
     if not SOURCE_FOLDERS:
-        log("❌ Aucun dossier configuré (SOURCE_FOLDERS vide)")
-        log("   Configurez SOURCE_FOLDERS dans .env : SOURCE_FOLDERS=[\"/path/1\", \"/path/2\"]")
+        log("❌ Aucun dossier configuré")
+        log("   Configuration multi-folders : SOURCE_FOLDERS=[\"/path/1\", \"/path/2\"]")
+        log("   OU configuration legacy : SOURCE_FOLDER=/path")
+        log(f"   Debug: SOURCE_FOLDERS_JSON='{SOURCE_FOLDERS_JSON}'")
+        log(f"   Debug: SOURCE_FOLDER_LEGACY='{SOURCE_FOLDER_LEGACY}'")
+        log(f"   Debug: Parsed SOURCE_FOLDERS={SOURCE_FOLDERS}")
         return
     
     log("🚀 DÉBUT DE L'EXTRACTION")
-    log(f"📂 {len(SOURCE_FOLDERS)} dossier(s) configuré(s) | Formats: {', '.join(VIDEO_EXTENSIONS)} | Ignore: trailers")
+    log(f"📂 {len(SOURCE_FOLDERS)} dossier(s) configuré(s) | Formats: {', '.join(VIDEO_EXTENSIONS)}")
     
     # Stats globales
     global_stats = {
@@ -429,15 +433,13 @@ def run_extraction():
     
     # Stats compactes globales
     french_total = global_stats["french_external"] + global_stats["french_in_mkv"]
-    skipped = global_stats["trailers_skipped"] + french_total + global_stats["external_found"] + global_stats["already_extracted"]
+    skipped = french_total + global_stats["external_found"] + global_stats["already_extracted"]
     
     log(f"✅ EXTRACTION TERMINÉE | Total: {global_stats['total']} | Extraits: {global_stats['mkv_extracted']} | Skippés: {skipped} | Erreurs: {global_stats['failed'] + global_stats['no_source']}")
     if global_stats["failed"] > 0:
-        log(f"  ❌ Extraction échouée : {global_stats['failed']}")
+        log(f"  ❌ MKV sans piste EN : {global_stats['failed']}")
     if global_stats["no_source"] > 0:
-        log(f"  ⚠️ Aucune source trouvée : {global_stats['no_source']}")
-    if global_stats["trailers_skipped"] > 0:
-        log(f"  🚫 Trailers ignorés : {global_stats['trailers_skipped']}")
+        log(f"  ⚠️ Non-MKV sans source externe : {global_stats['no_source']}")
     log('='*60)
 
 
