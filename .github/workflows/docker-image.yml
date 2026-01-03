@@ -15,8 +15,8 @@ jobs:
 
       - name: Build extractor Docker image
         run: docker build -t subtitle-extractor .
-        working-directory: subtitle-extractor-translator/extractor
+        working-directory: ./extractor
 
       - name: Build translator Docker image
         run: docker build -t subtitle-translator .
-        working-directory: subtitle-extractor-translator/translator
+        working-directory: ./translator
