@@ -5,7 +5,7 @@ services:
   # SUBTITLE EXTRACTOR (Standalone)
   # =========================================
   subtitle-extractor:
-    image: subtitle-extractor:latest
+    image: ghcr.io/ghislainsamy/subtitle-extractor-translator/extractor:latest
     container_name: subtitle-extractor
     volumes:
       # Multi-folders: monter tous les dossiers à scanner

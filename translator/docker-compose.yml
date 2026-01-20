@@ -5,7 +5,7 @@ services:
   # SUBTITLE TRANSLATOR (Standalone)
   # =========================================
   subtitle-translator:
-    image: subtitle-translator:latest
+    image: ghcr.io/ghislainsamy/subtitle-extractor-translator/translator:latest
     container_name: subtitle-translator
     volumes:
       # Multi-folders: monter tous les dossiers à traiter
