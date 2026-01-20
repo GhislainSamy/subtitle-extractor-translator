@@ -9,12 +9,9 @@ Ce projet combine deux agents Docker qui travaillent en tandem :
 1. **🎯 Subtitle Extractor** : Extrait les sous-titres anglais des pistes MKV
 2. **🌐 Subtitle Translator** : Traduit automatiquement EN → FR avec Google Gemini API
 
-#### 🚀 Démarrage rapide
-Prenez le fichier docker-compose situé à la racine du projet et configurez correctement les volumes et les variables en vous basant sur les exemples fournis.
+### 🆕 Multi-Folders Support
 
-### Multi-Folders Support
-
-Les deux agents supportent le **traitement de plusieurs dossiers simultanément** :
+Les deux agents supportent désormais le **traitement de plusieurs dossiers simultanément** :
 - ✅ Configuration simple via JSON array : `SOURCE_FOLDERS=["/media/movies", "/media/series"]`
 - ✅ Stats agrégées sur tous les dossiers
 - ✅ Logs clairs indiquant le dossier en cours : `📂 [1/3] Traitement: /media/movies`
@@ -23,18 +20,19 @@ Les deux agents supportent le **traitement de plusieurs dossiers simultanément*
 ### Workflow complet
 
 ```
-Single-Folder (mode classique)
+🎯 Single-Folder (mode classique)
 Film.mkv (piste EN intégrée)
          ↓
    [EXTRACTOR]
          ↓
 Film.en.srt.tmp (fichier de travail)
+OU Film.en.nosubtitle.tmp (si pas de piste EN)
          ↓
    [TRANSLATOR]
          ↓
 Film.fr.srt (traduction finale)
 
-Multi-Folders
+🆕 Multi-Folders
 /media/movies/Film1.mkv ──┐
 /media/series/S01E01.mkv ─┤
 /media/docs/Doc1.mkv ─────┘
@@ -85,6 +83,22 @@ Les sous-titres **ASS** (Advanced SubStation Alpha) et **SSA** (SubStation Alpha
 - ❌ **SUP** (HDMV PGS - Blu-ray) - Format image, OCR requis
 - ❌ **SUB** (VobSub - DVD) - Format image, OCR requis
 
+### Système de marqueurs (optimisation)
+
+Quand un MKV **n'a pas de piste anglaise**, l'extractor créé un fichier marqueur `.en.nosubtitle.tmp` pour éviter de ré-analyser le fichier à chaque cycle.
+
+**Fonctionnement :**
+1. **Premier cycle** : `mkvmerge -J` analyse le MKV → aucune piste EN trouvée → crée `Film.en.nosubtitle.tmp`
+2. **Cycles suivants** : détecte le marqueur → **skip l'analyse MKV** (gain de temps CPU)
+
+**Avantages :**
+- ⚡ **Accélération significative** : pas d'appel `mkvmerge` sur les MKV sans piste EN
+- 🔄 **Persistent** : le marqueur reste permanent entre les cycles
+
+**Cas particuliers :**
+- ❌ **Erreur temporaire** (timeout, NAS lent) → **PAS de marqueur créé** (retry au prochain cycle)
+- ✅ **Ajout piste EN plus tard** → supprimer manuellement le `.en.nosubtitle.tmp`
+
 ---
 
 ## 📦 Projets
@@ -112,62 +126,96 @@ Agent d'extraction de sous-titres anglais depuis les fichiers MKV.
 - 🔄 Reprise automatique en cas d'erreur
 - ⏭️ Ignore automatiquement les fichiers trailers
 - 💾 Pas de duplication : skip si le fichier de travail existe déjà
+- ⚡ **[NOUVEAU]** Système de marqueurs : skip MKV sans piste EN après première analyse
 
 **Format de sortie :**
-- 📝 Fichiers extraits au format `.en.FORMAT.txt` (ex: `.en.srt.txt`)
-- 🎯 Extension `.txt` pour éviter les doublons dans les lecteurs vidéo
+- 📝 Fichiers extraits au format `.en.FORMAT.tmp` (ex: `.en.srt.tmp`)
+- 🎯 Extension `.tmp` pour éviter les doublons dans les lecteurs vidéo
 - 📄 Préserve le format original (SRT, ASS, SUP) dans le nom de fichier
+- 🏷️ **[NOUVEAU]** Fichiers marqueurs `.en.nosubtitle.tmp` pour MKV sans piste EN
 
 #### ⚙️ Variables d'environnement
 
 | Variable | Valeur par défaut | Description |
 |----------|-------------------|-------------|
-| `SOURCE_FOLDERS` | `[]` | Liste JSON des dossiers (ex: `["/media/movies", "/media/series"]`) |
-| `SOURCE_FOLDER` | `/data` | Ancien format single-folder (ignoré si `SOURCE_FOLDERS` défini) |
+| `SOURCE_FOLDERS` | `[]` | **[NOUVEAU]** Liste JSON des dossiers (ex: `["/media/movies", "/media/series"]`) |
+| `SOURCE_FOLDER` | `/data` | **[LEGACY]** Ancien format single-folder (ignoré si `SOURCE_FOLDERS` défini) |
 | `WATCH_MODE` | `true` | Mode agent continu ou exécution unique |
 | `WATCH_INTERVAL` | `3600` | Intervalle de vérification en secondes |
 | `LOG_FILE` | `None` | Fichier de log (optionnel, None = console uniquement) |
-| `LOG_FILE_MAX_SIZE_MB` | `10` | Taille max par fichier de log avant rotation |
-| `LOG_FILE_BACKUP_COUNT` | `2` | Nombre de fichiers de backup à conserver |
+| `LOG_FILE_MAX_SIZE_MB` | `10` | **[NOUVEAU]** Taille max par fichier de log avant rotation |
+| `LOG_FILE_BACKUP_COUNT` | `2` | **[NOUVEAU]** Nombre de fichiers de backup à conserver |
+| `MKV_ANALYSIS_TIMEOUT` | `None` | **[NOUVEAU]** Timeout pour mkvmerge -J en secondes (None = pas de timeout) |
+| `MKV_EXTRACT_TIMEOUT` | `None` | **[NOUVEAU]** Timeout pour mkvextract en secondes (None = pas de timeout) |
 
+#### 🚀 Démarrage rapide
 
+**Configuration Single-Folder (classique) :**
+```bash
+cd extractor/
+
+# 1. Build de l'image Docker
+docker build -t subtitle-extractor .
+
+# 2. Configurer .env
+SOURCE_FOLDER=/media/movies  # Un seul dossier
+
+# 3. Démarrer le service
+docker-compose up -d
+
+# 4. Voir les logs
+docker-compose logs -f
+```
+
+**Configuration Multi-Folders  :**
+```bash
+cd extractor/
+
+# 1. Build de l'image Docker
+docker build -t subtitle-extractor .
+
+# 2. Configurer .env
+SOURCE_FOLDERS=["/media/movies", "/media/series", "/media/documentaries"]
+
+# 3. Adapter docker-compose.yml pour monter tous les volumes
+volumes:
+  - /path/to/movies:/media/movies
+  - /path/to/series:/media/series
+  - /path/to/docs:/media/documentaries
+
+# 4. Démarrer le service
+docker-compose up -d
+
+# 5. Voir les logs
+docker-compose logs -f
+```
 
 #### 📊 Exemple de sortie
 
-**Single-Folder:**
+**Single-Folder :**
 ```
 [2025-01-02 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
-[2025-01-02 10:00:00] 📂 Dossier: /data | Formats: mkv, mp4, avi
-[2025-01-02 10:00:01] ⭐️ [1/3 - 33.33%] Film1.mkv | Déjà traduit (piste FR dans MKV)
-[2025-01-02 10:00:02] 🎬 [2/3 - 66.67%] Film2.mkv | Extraction en cours...
-[2025-01-02 10:00:28] ✅ [2/3 - 66.67%] Film2.mkv | Extrait: Film2.en.srt.tmp
-[2025-01-02 10:00:29] 🎬 [3/3 - 100.00%] Film3.mkv | Extraction en cours...
-[2025-01-02 10:00:47] ✅ [3/3 - 100.00%] Film3.mkv | Extrait: Film3.en.ass.tmp
-[2025-01-02 10:00:48] ✅ EXTRACTION TERMINÉE | Total: 3 | Extraits: 2 | Skippés: 1 | Erreurs: 0
+[2025-01-02 10:00:00] 📂 Dossier: /data | Formats: mkv, mp4, avi | Ignore: trailers
+[2025-01-02 10:00:01] ✅ Film.mkv | Extrait: Film.en.srt.tmp
+[2025-01-02 10:00:02] ⭐️ Film2.mkv | Déjà traduit (piste FR dans MKV)
+[2025-01-02 10:00:05] ✅ EXTRACTION TERMINÉE | Total: 2 | Extraits: 1 | Skippés: 1 | Erreurs: 0
 ```
 
-**Multi-Folders:**
+**Multi-Folders :**
 ```
 [2025-01-02 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
-[2025-01-02 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: mkv, mp4, avi
-[2025-01-02 10:00:01] 📂 [1/3] Traitement: /media/movies [300 films au total]
-[2025-01-02 10:00:02]   ⭐️ [1/300 - 0.33%] Film1.mkv | Déjà traduit (sous-titre FR externe)
-[2025-01-02 10:00:03]   🎬 [2/300 - 0.67%] Film2.mkv | Extraction en cours...
-[2025-01-02 10:00:29]   ✅ [2/300 - 0.67%] Film2.mkv | Extrait: Film2.en.srt.tmp
-[2025-01-02 10:00:30]   ✓ [3/300 - 1.00%] Film3.mkv | Source externe trouvée: Film3.en.srt
-[2025-01-02 10:00:31] 📂 [2/3] Traitement: /media/series [150 épisodes au total]
-[2025-01-02 10:00:32]   🎬 [1/150 - 0.67%] S01E01.mkv | Extraction en cours...
-[2025-01-02 10:00:50]   ✅ [1/150 - 0.67%] S01E01.mkv | Extrait: S01E01.en.ass.tmp
-[2025-01-02 10:00:51]   ✓ [2/150 - 1.33%] S01E02.mkv | Source externe trouvée: S01E02.en.srt
-[2025-01-02 10:00:52] 📂 [3/3] Traitement: /media/documentaries [50 documentaires au total]
-[2025-01-02 10:00:53]   🎬 [1/50 - 2.00%] Doc1.mkv | Extraction en cours...
-[2025-01-02 10:01:15]   ✅ [1/50 - 2.00%] Doc1.mkv | Extrait: Doc1.en.srt.tmp
-[2025-01-02 10:01:16]   ❌ [2/50 - 4.00%] Doc2.mkv | Pas de piste sous-titre EN dans le MKV
-[2025-01-02 10:01:17]   ❌ [3/50 - 6.00%] Doc3.mp4 | Pas de source (non-MKV)
-[2025-01-02 10:01:18] ✅ EXTRACTION TERMINÉE | Total: 500 | Extraits: 3 | Skippés: 2 | Erreurs: 2
-[2025-01-02 10:01:18]   ❌ MKV sans piste EN : 1
-[2025-01-02 10:01:18]   ⚠️ Non-MKV sans source externe : 1
-[2025-01-02 10:01:18] ============================================================
+[2025-01-02 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: mkv, mp4, avi | Ignore: trailers
+[2025-01-02 10:00:01] 📂 [1/3] Traitement: /media/movies
+[2025-01-02 10:00:02]   ✅ Film1.mkv | Extrait: Film1.en.srt.tmp
+[2025-01-02 10:00:03]   ⭐️ Film2.mkv | Déjà traduit (sous-titre FR externe)
+[2025-01-02 10:00:04] 📂 [2/3] Traitement: /media/series
+[2025-01-02 10:00:05]   ✅ S01E01.mkv | Extrait: S01E01.en.ass.tmp
+[2025-01-02 10:00:06]   ✓ S01E02.mkv | Source externe trouvée: S01E02.en.srt
+[2025-01-02 10:00:07] 📂 [3/3] Traitement: /media/documentaries
+[2025-01-02 10:00:08]   ✅ Doc1.mkv | Extrait: Doc1.en.srt.tmp
+[2025-01-02 10:00:09]   ❌ Doc2.mp4 | Pas de source (non-MKV)
+[2025-01-02 10:00:10] ✅ EXTRACTION TERMINÉE | Total: 7 | Extraits: 4 | Skippés: 2 | Erreurs: 1
+[2025-01-02 10:00:10] ============================================================
 ```
 
 #### 🎯 Scénarios
@@ -230,13 +278,13 @@ Agent de traduction automatique EN → FR utilisant Google Gemini API.
 
 | Variable | Valeur par défaut | Description |
 |----------|-------------------|-------------|
-| `SOURCE_FOLDERS` | `[]` | Liste JSON des dossiers (ex: `["/media/movies", "/media/series"]`) |
-| `SOURCE_FOLDER` | `/data` | Ancien format single-folder (ignoré si `SOURCE_FOLDERS` défini) |
+| `SOURCE_FOLDERS` | `[]` | **[NOUVEAU]** Liste JSON des dossiers (ex: `["/media/movies", "/media/series"]`) |
+| `SOURCE_FOLDER` | `/data` | **[LEGACY]** Ancien format single-folder (ignoré si `SOURCE_FOLDERS` défini) |
 | `WATCH_MODE` | `true` | Mode agent continu ou exécution unique |
 | `WATCH_INTERVAL` | `3600` | Intervalle de vérification (secondes) |
 | `LOG_FILE` | `None` | Fichier de log (optionnel, None = console uniquement) |
-| `LOG_FILE_MAX_SIZE_MB` | `10` | Taille max par fichier de log avant rotation |
-| `LOG_FILE_BACKUP_COUNT` | `2` | Nombre de fichiers de backup à conserver |
+| `LOG_FILE_MAX_SIZE_MB` | `10` | **[NOUVEAU]** Taille max par fichier de log avant rotation |
+| `LOG_FILE_BACKUP_COUNT` | `2` | **[NOUVEAU]** Nombre de fichiers de backup à conserver |
 | `PAUSE_SECONDS` | `10` | Pause entre chaque lot traduit |
 | `BATCH_SIZE` | `50` | Nombre de lignes par lot |
 | `GEMINI_API_KEYS` | `[]` | Clés API Gemini (JSON array) |
@@ -244,12 +292,13 @@ Agent de traduction automatique EN → FR utilisant Google Gemini API.
 | `DELETE_PROGRESS_AFTER` | `false` | Supprimer .fr.progress.json après traduction |
 | `DELETE_SOURCE_AFTER` | `false` | Supprimer .en.XXX.tmp après traduction |
 | `DELETE_CONVERTED_AFTER` | `false` | Supprimer .to.srt.tmp après traduction |
+| `DELETE_NO_SUBTITLE_MARKER` | `false` | **[NOUVEAU]** Supprimer les fichiers `.en.nosubtitle.tmp` marqueurs |
 
 **Configuration optimale :**
 
 ```yaml
 environment:
-  # Multi-Folders Support
+  # 🆕 Multi-Folders Support
   # Configuration single-folder (classique)
   - SOURCE_FOLDER=/data
   
@@ -271,9 +320,10 @@ environment:
   
   # Nettoyage automatique (défaut: false = on garde tout)
   # Mettre à true pour supprimer les fichiers temporaires
-  - DELETE_PROGRESS_AFTER=false   # Garder .fr.progress.json
-  - DELETE_SOURCE_AFTER=false     # Garder .en.XXX.tmp
-  - DELETE_CONVERTED_AFTER=false  # Garder .to.srt.tmp
+  - DELETE_PROGRESS_AFTER=false        # Garder .fr.progress.json
+  - DELETE_SOURCE_AFTER=false          # Garder .en.XXX.tmp
+  - DELETE_CONVERTED_AFTER=false       # Garder .to.srt.tmp
+  - DELETE_NO_SUBTITLE_MARKER=false    # Garder .en.nosubtitle.tmp
 ```
 
 **Gestion du nettoyage :**
@@ -282,61 +332,71 @@ Par défaut (`false`), tous les fichiers temporaires sont conservés :
 - ✅ `.fr.progress.json` → reprise possible après interruption
 - ✅ `.en.ssa.tmp` → source originale gardée
 - ✅ `.en.ssa.to.srt.tmp` → conversion SRT gardée
+- ✅ `.en.nosubtitle.tmp` → marqueur MKV sans piste EN (skip cycles futurs)
 
 Pour un nettoyage automatique (mode production), mettre à `true` :
 ```yaml
-  - DELETE_PROGRESS_AFTER=true    # Supprimer .fr.progress.json
-  - DELETE_SOURCE_AFTER=true      # Supprimer .en.XXX.tmp
-  - DELETE_CONVERTED_AFTER=true   # Supprimer .to.srt.tmp
+  - DELETE_PROGRESS_AFTER=true         # Supprimer .fr.progress.json
+  - DELETE_SOURCE_AFTER=true           # Supprimer .en.XXX.tmp
+  - DELETE_CONVERTED_AFTER=true        # Supprimer .to.srt.tmp
+  - DELETE_NO_SUBTITLE_MARKER=true     # Supprimer .en.nosubtitle.tmp
 ```
 
 Résultat final : uniquement `Film.fr.srt` conservé.
 
+#### 🚀 Démarrage rapide
+
+```bash
+cd translator/
+
+# 1. Build de l'image Docker
+docker build -t subtitle-translator .
+
+# 2. Configurer docker-compose.yml
+# Éditer volumes + GEMINI_API_KEYS
+
+# 3. Démarrer le service
+docker-compose up -d
+
+# 4. Voir les logs
+docker-compose logs -f
+```
+
 #### 📊 Exemple de sortie
 
-**Single-Folder:**
+**Single-Folder :**
 ```
 [2025-01-02 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
 [2025-01-02 10:00:00] 📂 Dossier: /data | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
-[2025-01-02 10:00:01] 🎬 [1/3 - 33.33%] Film1.mkv | Source: Film1.en.srt.tmp (500 lignes)
-[2025-01-02 10:00:02] 🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
-[2025-01-02 10:00:18] ⏳ [1/3 - 33.33%] Film1.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
+[2025-01-02 10:00:00] 🎬 Film.mkv | Source: Film.en.srt.tmp (1945 lignes)
+[2025-01-02 10:00:00] 🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
+[2025-01-02 10:00:16] ⏳ Film.mkv | 1-50/1945 (2.6%) | ETA: ~18m (fin: 10:18)
+[2025-01-02 10:00:30] ⏳ Film.mkv | 51-100/1945 (5.1%) | ETA: ~17m (fin: 10:17)
 ...
-[2025-01-02 10:08:00] ✅ [1/3 - 33.33%] Film1.mkv | Terminé en 8m 0s | Output: Film1.fr.srt
-[2025-01-02 10:08:01] ⏭️ [2/3 - 66.67%] Film2.mkv | Déjà traduit (Film.fr.srt existe)
-[2025-01-02 10:08:02] 🎬 [3/3 - 100.00%] Film3.mkv | Source: Film3.en.srt.tmp (300 lignes)
-[2025-01-02 10:08:03] 🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
-[2025-01-02 10:08:18] ⏳ [3/3 - 100.00%] Film3.mkv | 1-50/300 (16.7%) | ETA: ~5m (fin: 10:13)
-...
-[2025-01-02 10:14:00] ✅ [3/3 - 100.00%] Film3.mkv | Terminé en 6m 0s | Output: Film3.fr.srt
-[2025-01-02 10:14:01] ✅ TRADUCTION TERMINÉE | Total: 3 | Complétés: 2 | Déjà faits: 1 | Warnings: 0 | Erreurs: 0
+[2025-01-02 10:17:45] ✅ Film.mkv | Terminé en 17m 45s | Output: Film.fr.srt
+[2025-01-02 10:17:45] ✅ TRADUCTION TERMINÉE | Total: 1 | Complétés: 1 | Déjà faits: 0 | Erreurs: 0
 ```
 
-**Multi-Folders:**
+**Multi-Folders :**
 ```
 [2025-01-02 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
 [2025-01-02 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
-[2025-01-02 10:00:01] 📂 [1/3] Traitement: /media/movies [300 films au total]
-[2025-01-02 10:00:02]   ⏭️ [1/300 - 0.33%] Film1.mkv | Déjà traduit (Film.fr.srt existe)
-[2025-01-02 10:00:03]   🎬 [2/300 - 0.67%] Film2.mkv | Source: Film2.en.srt.tmp (500 lignes)
+[2025-01-02 10:00:01] 📂 [1/3] Traitement: /media/movies
+[2025-01-02 10:00:02]   ⏭️ Film1.mkv | Déjà traduit (Film.fr.srt existe)
+[2025-01-02 10:00:03]   🎬 Film2.mkv | Source: Film2.en.srt.tmp (500 lignes)
 [2025-01-02 10:00:04]   🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
-[2025-01-02 10:00:20]   ⏳ [2/300 - 0.67%] Film2.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
+[2025-01-02 10:00:20]   ⏳ Film2.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
 ...
-[2025-01-02 10:08:00]   ✅ [2/300 - 0.67%] Film2.mkv | Terminé en 8m 0s | Output: Film2.fr.srt
-[2025-01-02 10:08:01] 📂 [2/3] Traitement: /media/series [150 épisodes au total]
-[2025-01-02 10:08:02]   🎬 [1/150 - 0.67%] S01E01.mkv | Source: S01E01.en.ass.tmp (300 lignes) | Converting ASS→SRT
+[2025-01-02 10:08:00]   ✅ Film2.mkv | Terminé en 8m 0s | Output: Film2.fr.srt
+[2025-01-02 10:08:01] 📂 [2/3] Traitement: /media/series
+[2025-01-02 10:08:02]   🎬 S01E01.mkv | Source: S01E01.en.ass.tmp (300 lignes) | Converting ASS→SRT
 [2025-01-02 10:08:03]   🔑 utilisation clé #1 | modèle gemini-2.0-flash-exp
-[2025-01-02 10:08:20]   ⏳ [1/150 - 0.67%] S01E01.mkv | 1-50/300 (16.7%) | ETA: ~5m (fin: 10:13)
 ...
-[2025-01-02 10:14:00]   ✅ [1/150 - 0.67%] S01E01.mkv | Terminé en 6m 0s | Output: S01E01.fr.srt
-[2025-01-02 10:14:01] 📂 [3/3] Traitement: /media/documentaries [50 documentaires au total]
-[2025-01-02 10:14:02]   ⚠️ [1/50 - 2.00%] Doc1.mkv | Rien à traiter
-[2025-01-02 10:14:03]   ⚠️ [2/50 - 4.00%] Doc2.mkv | Format bitmap (SUP/SUB) non supporté sans OCR
-[2025-01-02 10:14:04] ✅ TRADUCTION TERMINÉE | Total: 500 | Complétés: 1 | Déjà faits: 1 | Warnings: 2 | Erreurs: 0
-[2025-01-02 10:14:04]   ⚠️ Warnings :
-[2025-01-02 10:14:04]     - Rien à traiter : 1
-[2025-01-02 10:14:04]     - Format non supporté (SUP/SUB) : 1
-[2025-01-02 10:14:04] ============================================================
+[2025-01-02 10:14:00]   ✅ S01E01.mkv | Terminé en 6m 0s | Output: S01E01.fr.srt
+[2025-01-02 10:14:01] 📂 [3/3] Traitement: /media/documentaries
+[2025-01-02 10:14:02]   ❌ Doc1.mkv | Aucune source anglaise trouvée
+[2025-01-02 10:14:03] ✅ TRADUCTION TERMINÉE | Total: 4 | Complétés: 2 | Déjà faits: 1 | Erreurs: 1
+[2025-01-02 10:14:03] ============================================================
 ```
 
 #### 🎯 Scénarios
@@ -412,17 +472,34 @@ Input: Film.en.sup.tmp (bitmap PGS)
 
 ---
 
+## 🚀 Workflow complet
+
+### Lancer les 2 agents en parallèle
+
+```bash
+# Terminal 1 - Extractor
+cd extractor/
+docker build -t subtitle-extractor .
+
+# Terminal 2 - Translator
+cd translator/
+docker build -t subtitle-translator .
+
+# Utiliser le docker-compose à la racine du projet
+```
+
 ### Pipeline automatique
 
 ```
 1. Nouveau film ajouté : Film.mkv
    ↓
 2. EXTRACTOR détecte (cycle toutes les heures)
-   → Extrait piste EN → Film.en.srt.txt
+   → Extrait piste EN → Film.en.srt.tmp
+   → Si pas de piste EN → Film.en.nosubtitle.tmp (marqueur, skip cycles futurs)
    ↓
 3. TRANSLATOR détecte (cycle toutes les heures)
    → Traduit → Film.fr.srt
-   → Nettoie → Film.en.srt.txt supprimé
+   → Nettoie → Film.en.srt.tmp supprimé (si DELETE_SOURCE_AFTER=true)
    ↓
 4. Résultat final :
    - Film.mkv (piste EN intégrée)
@@ -487,9 +564,9 @@ subtitle-automation/
 - ✅ Logs avec timestamps (timezone Europe/Paris)
 - ✅ Logs fichier optionnels via `LOG_FILE` avec **rotation automatique**
 - ✅ Messages d'erreur détaillés pour debugging
-- ✅ **Support multi-folders** pour traiter plusieurs collections simultanément
-- ✅ **Rétro-compatibilité** avec l'ancien format `SOURCE_FOLDER`
-- ✅ **Stats agrégées** sur tous les dossiers configurés
+- 🆕 **Support multi-folders** pour traiter plusieurs collections simultanément
+- 🆕 **Rétro-compatibilité** avec l'ancien format `SOURCE_FOLDER`
+- 🆕 **Stats agrégées** sur tous les dossiers configurés
 
 ---
 
@@ -520,37 +597,29 @@ Quand `translator.log` atteint 10 MB → rotation automatique.
 
 Les logs sont **compacts et sur une seule ligne** pour faciliter la lecture et réduire l'espace disque :
 
-**Extractor (single-folder):**
+**Extractor (single-folder) :**
 ```
 [2026-01-01 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
-[2026-01-01 10:00:00] 📂 Dossier: /data | Formats: mkv, mp4, avi
-[2026-01-01 10:00:01] 🎬 Film1.mkv | Extraction en cours...
-[2026-01-01 10:00:27] ✅ Film1.mkv | Extrait: Film.en.ssa.tmp
-[2026-01-01 10:00:28] ⏭️ Film2.mkv | Déjà traduit (piste FR dans MKV)
-[2026-01-01 10:00:29] ❌ Film3.mkv | Pas de piste sous-titre EN dans le MKV
-[2026-01-01 10:00:30] ✅ EXTRACTION TERMINÉE | Total: 10 | Extraits: 5 | Skippés: 3 | Erreurs: 2
-[2026-01-01 10:00:30]   ❌ MKV sans piste EN : 1
-[2026-01-01 10:00:30]   ⚠️ Non-MKV sans source externe : 1
+[2026-01-01 10:00:00] 📂 Dossier: /data | Formats: mkv, mp4, avi | Ignore: trailers
+[2026-01-01 10:00:01] ✅ Film.mkv | Extrait: Film.en.ssa.tmp
+[2026-01-01 10:00:02] ⏭️ Film2.mkv | Déjà traduit (piste FR dans MKV)
+[2026-01-01 10:00:05] ✅ EXTRACTION TERMINÉE | Total: 10 | Extraits: 5 | Skippés: 3 | Erreurs: 2
 ```
 
-**Extractor (multi-folders):**
+**Extractor (multi-folders) :**
 ```
 [2026-01-01 10:00:00] 🚀 DÉBUT DE L'EXTRACTION
-[2026-01-01 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: mkv, mp4, avi
-[2026-01-01 10:00:01] 📂 [1/3] Traitement: /media/movies [300 films au total]
-[2026-01-01 10:00:02]   🎬 [1/300 - 0.33%] Film1.mkv | Extraction en cours...
-[2026-01-01 10:00:28]   ✅ [1/300 - 0.33%] Film1.mkv | Extrait: Film1.en.srt.tmp
-[2026-01-01 10:00:29]   ⭐️ [2/300 - 0.67%] Film2.mkv | Déjà traduit (sous-titre FR externe)
-[2026-01-01 10:00:30] 📂 [2/3] Traitement: /media/series [150 épisodes au total]
-[2026-01-01 10:00:31]   🎬 [1/150 - 0.67%] S01E01.mkv | Extraction en cours...
-[2026-01-01 10:00:49]   ✅ [1/150 - 0.67%] S01E01.mkv | Extrait: S01E01.en.ass.tmp
-[2026-01-01 10:00:50]   ❌ [2/150 - 1.33%] S01E02.mkv | Pas de piste sous-titre EN dans le MKV
-[2026-01-01 10:00:51] ✅ EXTRACTION TERMINÉE | Total: 450 | Extraits: 2 | Skippés: 1 | Erreurs: 1
-[2026-01-01 10:00:51]   ❌ MKV sans piste EN : 1
-[2026-01-01 10:00:51] ============================================================
+[2026-01-01 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: mkv, mp4, avi | Ignore: trailers
+[2026-01-01 10:00:01] 📂 [1/3] Traitement: /media/movies
+[2026-01-01 10:00:02]   ✅ Film1.mkv | Extrait: Film1.en.srt.tmp
+[2026-01-01 10:00:03]   ⭐️ Film2.mkv | Déjà traduit (sous-titre FR externe)
+[2026-01-01 10:00:04] 📂 [2/3] Traitement: /media/series
+[2026-01-01 10:00:05]   ✅ S01E01.mkv | Extrait: S01E01.en.ass.tmp
+[2026-01-01 10:00:10] ✅ EXTRACTION TERMINÉE | Total: 25 | Extraits: 15 | Skippés: 8 | Erreurs: 2
+[2026-01-01 10:00:10] ============================================================
 ```
 
-**Translator (single-folder):**
+**Translator (single-folder) :**
 ```
 [2026-01-01 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
 [2026-01-01 10:00:00] 📂 Dossier: /data | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
@@ -559,26 +628,21 @@ Les logs sont **compacts et sur une seule ligne** pour faciliter la lecture et r
 [2026-01-01 10:00:30] ⏳ Film.mkv | 51-100/1945 (5.1%) | ETA: ~17m (fin: 10:17)
 ...
 [2026-01-01 10:17:45] ✅ Film.mkv | Terminé en 17m 45s | Output: Film.fr.srt
-[2026-01-01 10:17:45] ✅ TRADUCTION TERMINÉE | Total: 1 | Complétés: 1 | Warnings: 0 | Erreurs: 0
+[2026-01-01 10:17:45] ✅ TRADUCTION TERMINÉE | Total: 1 | Complétés: 1 | Erreurs: 0
 ```
 
-**Translator (multi-folders):**
+**Translator (multi-folders) :**
 ```
 [2026-01-01 10:00:00] 🚀 DÉBUT DE LA TRADUCTION
 [2026-01-01 10:00:00] 📂 3 dossier(s) configuré(s) | Formats: SRT, ASS, SSA, VTT | Modèles: gemini-2.0-flash-exp
-[2026-01-01 10:00:01] 📂 [1/3] Traitement: /media/movies [300 films au total]
-[2026-01-01 10:00:02]   🎬 [1/300 - 0.33%] Film1.mkv | Source: Film1.en.srt.tmp (500 lignes)
-[2026-01-01 10:00:20]   ⏳ [1/300 - 0.33%] Film1.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
+[2026-01-01 10:00:01] 📂 [1/3] Traitement: /media/movies
+[2026-01-01 10:00:02]   🎬 Film1.mkv | Source: Film1.en.srt.tmp (500 lignes)
+[2026-01-01 10:00:20]   ⏳ Film1.mkv | 1-50/500 (10.0%) | ETA: ~8m (fin: 10:08)
 ...
-[2026-01-01 10:08:00]   ✅ [1/300 - 0.33%] Film1.mkv | Terminé en 8m 0s | Output: Film1.fr.srt
-[2026-01-01 10:08:01] 📂 [2/3] Traitement: /media/series [150 épisodes au total]
-[2026-01-01 10:08:02]   ⚠️ [1/150 - 0.67%] S01E01.mkv | Rien à traiter
-[2026-01-01 10:08:03]   ⚠️ [2/150 - 1.33%] S01E02.mkv | Format bitmap (SUP/SUB) non supporté sans OCR
+[2026-01-01 10:08:00]   ✅ Film1.mkv | Terminé en 8m 0s | Output: Film1.fr.srt
+[2026-01-01 10:08:01] 📂 [2/3] Traitement: /media/series
 ...
-[2026-01-01 10:20:00] ✅ TRADUCTION TERMINÉE | Total: 450 | Complétés: 1 | Déjà faits: 0 | Warnings: 2 | Erreurs: 0
-[2026-01-01 10:20:00]   ⚠️ Warnings :
-[2026-01-01 10:20:00]     - Rien à traiter : 1
-[2026-01-01 10:20:00]     - Format non supporté (SUP/SUB) : 1
+[2026-01-01 10:20:00] ✅ TRADUCTION TERMINÉE | Total: 12 | Complétés: 8 | Déjà faits: 3 | Erreurs: 1
 [2026-01-01 10:20:00] ============================================================
 ```
 
@@ -587,10 +651,7 @@ Les logs sont **compacts et sur une seule ligne** pour faciliter la lecture et r
 - 🔍 **Facile à grep/filtrer** (tout sur une ligne)
 - 📊 **Statistiques en fin de cycle** (pas de détails intermédiaires)
 - ⚡ **Rapide à lire** (pas de séparateurs ni lignes vides)
-- ✅ **Indicateur de progression multi-folders** : `[1/3]`, `[2/3]`, etc.
-- ✅ **Progression par fichier** : `[1/300 - 0.33%]` pour suivre l'avancement dans chaque dossier
-- ✅ **Log de début d'extraction** : `🎬 Extraction en cours...` pour éviter l'impression de blocage
-- ✅ **Séparation warnings/erreurs** : statistiques claires et précises
+- 🆕 **Indicateur de progression multi-folders** : `[1/3]`, `[2/3]`, etc.
 
 ---
 

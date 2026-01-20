@@ -5,7 +5,7 @@ services:
   # SUBTITLE EXTRACTOR
   # =========================================
   subtitle-extractor:
-    image: ghcr.io/ghislainsamy/subtitle-extractor-translator/extractor:latest
+    image: subtitle-extractor:latest
     container_name: subtitle-extractor
     volumes:
       # Multi-folders: monter tous les dossiers
@@ -31,14 +31,18 @@ services:
       - LOG_FILE=/app/logs/extractor.log
       - LOG_FILE_MAX_SIZE_MB=10        # Taille max par fichier (MB)
       - LOG_FILE_BACKUP_COUNT=2        # Nombre de backups (total = 3 fichiers: extractor.log + .1 + .2)
-      
+
+      # ⏱️ Timeouts optionnels (en secondes, laisser vide = pas de timeout)
+      # - MKV_ANALYSIS_TIMEOUT=30      # Timeout pour mkvmerge -J (rapide, rarement nécessaire)
+      # - MKV_EXTRACT_TIMEOUT=60       # Timeout pour mkvextract (utile si NAS lent)
+
     restart: unless-stopped
 
   # =========================================
   # SUBTITLE TRANSLATOR
   # =========================================
   subtitle-translator:
-    image: ghcr.io/ghislainsamy/subtitle-extractor-translator/translator:latest
+    image: subtitle-translator:latest
     container_name: subtitle-translator
     volumes:
       # Multi-folders: monter les mêmes dossiers que l'extractor
@@ -92,7 +96,10 @@ services:
       
       # Supprimer .to.srt.tmp après traduction ?
       - DELETE_CONVERTED_AFTER=false
-      
+
+      # Supprimer .en.nosubtitle.tmp (fichiers marqueurs) ?
+      # - DELETE_NO_SUBTITLE_MARKER=false
+
     restart: unless-stopped
     
     # 🔗 Optionnel: faire dépendre le translator de l'extractor

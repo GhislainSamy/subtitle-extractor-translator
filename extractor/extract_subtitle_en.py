@@ -27,6 +27,12 @@ LOG_FILE = os.getenv("LOG_FILE", None)  # None = console uniquement
 LOG_FILE_MAX_SIZE_MB = int(os.getenv("LOG_FILE_MAX_SIZE_MB", 10))  # Taille max par fichier (MB)
 LOG_FILE_BACKUP_COUNT = int(os.getenv("LOG_FILE_BACKUP_COUNT", 2))  # Nombre de backups
 
+# Timeouts pour mkvmerge et mkvextract (None = pas de timeout)
+MKV_ANALYSIS_TIMEOUT = os.getenv("MKV_ANALYSIS_TIMEOUT")
+MKV_ANALYSIS_TIMEOUT = int(MKV_ANALYSIS_TIMEOUT) if MKV_ANALYSIS_TIMEOUT else None
+MKV_EXTRACT_TIMEOUT = os.getenv("MKV_EXTRACT_TIMEOUT")
+MKV_EXTRACT_TIMEOUT = int(MKV_EXTRACT_TIMEOUT) if MKV_EXTRACT_TIMEOUT else None
+
 # Parse SOURCE_FOLDERS
 try:
     SOURCE_FOLDERS = json.loads(SOURCE_FOLDERS_JSON)
@@ -159,19 +165,51 @@ def find_extracted_subtitle(base_path):
 def get_tracks(mkv_path):
     """
     Récupère les pistes du fichier MKV
-    Retourne une liste vide en cas d'erreur
+    Retourne un tuple (tracks, error) :
+    - (tracks, None) en cas de succès
+    - ([], "timeout") si timeout
+    - ([], "file_error") si fichier corrompu/inexistant
+    - ([], "corrupted_file") si mkvmerge retourne des erreurs
+    - ([], "invalid_json") si parsing JSON échoue
+    - ([], "unknown_error: ...") pour les autres erreurs
     """
     try:
+        kwargs = {
+            "capture_output": True,
+            "text": True,
+            "check": True
+        }
+
+        # Ajouter timeout si configuré
+        if MKV_ANALYSIS_TIMEOUT is not None:
+            kwargs["timeout"] = MKV_ANALYSIS_TIMEOUT
+
         result = subprocess.run(
             ["mkvmerge", "-J", mkv_path],
-            capture_output=True,
-            text=True,
-            check=True
+            **kwargs
         )
-        return json.loads(result.stdout)["tracks"]
+
+        data = json.loads(result.stdout)
+
+        # Vérifier si mkvmerge a renvoyé des erreurs (même avec exit=0)
+        if "errors" in data and data["errors"]:
+            return [], "corrupted_file"
+
+        return data.get("tracks", []), None
+
+    except subprocess.TimeoutExpired:
+        log(f"  ⚠️ timeout lecture MKV (>{MKV_ANALYSIS_TIMEOUT}s)")
+        return [], "timeout"
+    except subprocess.CalledProcessError as e:
+        # Exit code 2 = fichier invalide/inexistant
+        log(f"  ⚠️ erreur mkvmerge (exit {e.returncode})")
+        return [], "file_error"
+    except json.JSONDecodeError:
+        log(f"  ⚠️ erreur parsing JSON")
+        return [], "invalid_json"
     except Exception as e:
-        log(f"  ⚠️ erreur lecture MKV : {e}")
-        return []
+        log(f"  ⚠️ erreur inattendue : {e}")
+        return [], f"unknown_error: {str(e)}"
 
 
 def has_french_subtitle_in_mkv(mkv_path):
@@ -179,8 +217,8 @@ def has_french_subtitle_in_mkv(mkv_path):
     Vérifie si le MKV contient une piste de sous-titre français
     Retourne True si trouvé, False sinon
     """
-    tracks = get_tracks(mkv_path)
-    if not tracks:
+    tracks, error = get_tracks(mkv_path)
+    if error or not tracks:
         return False
     
     for track in tracks:
@@ -204,40 +242,60 @@ def has_french_subtitle_in_mkv(mkv_path):
     return False
 
 
-def extract_from_mkv(mkv_path, base_path):
+def extract_from_mkv(mkv_path, base_path, video_name):
     """
     Extrait le sous-titre anglais du MKV vers un fichier .en.FORMAT.tmp
-    Retourne True si extraction réussie, False sinon
+    Retourne un tuple (success, reason) :
+    - (True, "extracted") si extraction réussie
+    - (False, "no_english_track") si aucune piste EN trouvée (légitime)
+    - (False, "analysis_timeout") si timeout lors de l'analyse
+    - (False, "analysis_file_error") si fichier corrompu/inexistant
+    - (False, "analysis_corrupted_file") si mkvmerge retourne des erreurs
+    - (False, "extraction_timeout") si timeout lors de l'extraction
+    - (False, "extraction_failed") si mkvextract échoue
+    - (False, "extraction_empty_file") si fichier extrait est vide
     """
-    tracks = get_tracks(mkv_path)
+    tracks, error = get_tracks(mkv_path)
+
+    if error:
+        # Erreur lors de l'analyse → retry plus tard, pas de marqueur
+        return False, f"analysis_{error}"
+
     if not tracks:
-        return False
-    
+        # Pas de pistes du tout (ne devrait pas arriver si pas d'erreur)
+        return False, "analysis_no_tracks"
+
     subtitle_tracks = []
-    
+
     for track in tracks:
         if track["type"] != "subtitles":
             continue
-        
+
         props = track.get("properties", {})
         lang = (props.get("language") or "").lower()
         name = (props.get("track_name") or "").lower()
-        
+
         is_english = (
             lang in ("en", "eng", "und") or
             "english" in name
         )
-        
+
         if is_english:
             subtitle_tracks.append(track)
-    
+
     if not subtitle_tracks:
-        return False
-    
+        # Légitime : pas de piste EN → créer fichier marqueur
+        marker_file = f"{base_path}.en.nosubtitle.tmp"
+        try:
+            open(marker_file, 'w').close()  # Fichier vide
+        except Exception:
+            pass  # Ignore les erreurs de création du marqueur
+        return False, "no_english_track"
+
     track = subtitle_tracks[0]
     track_id = track["id"]
     codec = track.get("codec", "").lower()
-    
+
     # Déterminer l'extension selon le codec
     if "s_text/ass" in codec or "advanced" in codec or ("ass" in codec and "substation" not in codec):
         format_ext = "ass"
@@ -251,88 +309,133 @@ def extract_from_mkv(mkv_path, base_path):
         format_ext = "vtt"
     else:
         format_ext = "srt"  # Fallback (SubRip, S_TEXT/UTF8)
-    
+
     temp_file = f"{base_path}.temp.{format_ext}"
     out_file = f"{base_path}.en.{format_ext}.tmp"
-    
+
     try:
+        kwargs = {
+            "check": True,
+            "capture_output": True
+        }
+
+        # Ajouter timeout si configuré
+        if MKV_EXTRACT_TIMEOUT is not None:
+            kwargs["timeout"] = MKV_EXTRACT_TIMEOUT
+
+        # Log avant extraction
+        log(f"🔄 {video_name} | Extraction de la piste EN en cours...")
+
         # Extraire vers un fichier temporaire
         subprocess.run(
             ["mkvextract", "tracks", mkv_path, f"{track_id}:{temp_file}"],
-            check=True,
-            capture_output=True
+            **kwargs
         )
-        
+
+        # Vérifier que le fichier extrait existe et n'est pas vide
+        if not os.path.exists(temp_file) or os.path.getsize(temp_file) == 0:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            return False, "extraction_empty_file"
+
         # Renommer en .en.FORMAT.tmp
         shutil.move(temp_file, out_file)
-        return True
-        
-    except Exception as e:
-        # Nettoyer le fichier temporaire si présent
+        return True, "extracted"
+
+    except subprocess.TimeoutExpired:
+        # Timeout extraction → retry plus tard, pas de marqueur
         if os.path.exists(temp_file):
             os.remove(temp_file)
-        return False
+        log(f"  ⚠️ timeout extraction (>{MKV_EXTRACT_TIMEOUT}s)")
+        return False, "extraction_timeout"
+    except subprocess.CalledProcessError as e:
+        # mkvextract a échoué
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        log(f"  ⚠️ erreur mkvextract (exit {e.returncode})")
+        return False, "extraction_failed"
+    except Exception as e:
+        # Autre erreur
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        log(f"  ⚠️ erreur inattendue extraction : {e}")
+        return False, f"extraction_error: {str(e)}"
 
 
-def process_video_file(video_path, file_index=0, total_files=0):
+def process_video_file(video_path):
     """
     Processus principal avec détection FR :
     1. Fichier FR externe existe → skip (déjà traduit)
     2. Piste sous-titre FR dans MKV → skip (déjà traduit)
     3. Fichier EN externe existe → skip (source dispo)
     4. Fichier .en.XXX.tmp déjà extrait → skip
-    5. MKV → extraction piste EN → .en.FORMAT.tmp
-    6. Pas MKV → erreur
+    5. Fichier .en.nosubtitle.tmp existe → skip (MKV déjà analysé, pas de piste EN)
+    6. MKV → extraction piste EN → .en.FORMAT.tmp
+    7. Pas MKV → erreur
     """
     base, ext = os.path.splitext(video_path)
     video_name = os.path.basename(video_path)
     is_mkv = ext.lower() == ".mkv"
-    
-    # Calculer le pourcentage de progression dans le dossier
-    folder_progress = ""
-    if file_index > 0 and total_files > 0:
-        percentage = (file_index / total_files) * 100
-        folder_progress = f"[{file_index}/{total_files} - {percentage:.2f}%] "
-    
+
     # 1. Vérifier si fichier FR externe existe
     if find_french_subtitle(base):
-        log(f"⭐️ {folder_progress}{video_name} | Déjà traduit (sous-titre FR externe)")
+        log(f"⭐️ {video_name} | Déjà traduit (sous-titre FR externe)")
         return "french_external"
-    
+
     # 2. Vérifier si piste sous-titre FR dans le MKV
     if is_mkv and has_french_subtitle_in_mkv(video_path):
-        log(f"⭐️ {folder_progress}{video_name} | Déjà traduit (piste FR dans MKV)")
+        log(f"⭐️ {video_name} | Déjà traduit (piste FR dans MKV)")
         return "french_in_mkv"
-    
+
     # 3. Vérifier si fichier EN externe existe
     external_file = find_external_subtitle(base)
-    
+
     if external_file:
-        log(f"✓ {folder_progress}{video_name} | Source externe trouvée: {os.path.basename(external_file)}")
+        log(f"✓ {video_name} | Source externe trouvée: {os.path.basename(external_file)}")
         return "external"
-    
-    # 4. Vérifier si déjà extrait (.en.XXX.txt)
+
+    # 4. Vérifier si déjà extrait (.en.XXX.tmp)
     extracted = find_extracted_subtitle(base)
     if extracted:
-        log(f"✓ {folder_progress}{video_name} | Déjà extrait: {os.path.basename(extracted)}")
+        log(f"✓ {video_name} | Déjà extrait: {os.path.basename(extracted)}")
         return "extracted"
-    
-    # 5. Pas de fichier externe → extraire du MKV
+
+    # 5. Vérifier si fichier marqueur .en.nosubtitle.tmp existe
+    marker_file = f"{base}.en.nosubtitle.tmp"
+    if os.path.isfile(marker_file):
+        log(f"⏭️ {video_name} | Pas de piste EN (MKV déjà analysé)")
+        return "no_subtitle_in_mkv"
+
+    # 6. Pas de fichier externe → extraire du MKV
     if is_mkv:
-        # Log de début d'extraction
-        log(f"🎬 {folder_progress}{video_name} | Extraction en cours...")
-        
-        if extract_from_mkv(video_path, base):
+        success, reason = extract_from_mkv(video_path, base, video_name)
+
+        if success:
             # Trouver le fichier extrait pour afficher son nom
             extracted = find_extracted_subtitle(base)
             extracted_name = os.path.basename(extracted) if extracted else "fichier"
-            log(f"✅ {folder_progress}{video_name} | Extrait: {extracted_name}")
+            log(f"✅ {video_name} | Extrait: {extracted_name}")
             return "mkv_extracted"
         else:
-            log(f"❌ {folder_progress}{video_name} | Pas de piste sous-titre EN dans le MKV")
-            return "failed"
+            # Gérer les différents codes d'erreur
+            if reason == "no_english_track":
+                # Légitime : pas de piste EN (marqueur déjà créé)
+                log(f"⏭️ {video_name} | Pas de piste EN dans MKV")
+                return "no_subtitle_in_mkv"
+            elif reason.startswith("analysis_"):
+                # Erreur d'analyse (timeout, fichier corrompu, etc.)
+                log(f"❌ {video_name} | Erreur analyse MKV ({reason})")
+                return "mkv_analysis_error"
+            elif reason.startswith("extraction_"):
+                # Erreur d'extraction (timeout, échec mkvextract, etc.)
+                log(f"❌ {video_name} | Erreur extraction MKV ({reason})")
+                return "mkv_extraction_error"
+            else:
+                # Erreur inconnue
+                log(f"❌ {video_name} | Échec extraction MKV ({reason})")
+                return "failed"
     else:
-        log(f"❌ {folder_progress}{video_name} | Pas de source (non-MKV)")
+        log(f"❌ {video_name} | Pas de source (non-MKV)")
         return "no_source"
 
 
@@ -340,22 +443,11 @@ def process_folder(folder_path, folder_index, total_folders):
     """
     Traite un dossier spécifique et retourne les stats
     """
+    log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path}")
+    
     if not os.path.isdir(folder_path):
-        log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path}")
         log(f"  ⚠️ Dossier inexistant, ignoré")
         return None
-    
-    # Compter le nombre total de fichiers vidéo (sans trailers)
-    total_files = 0
-    for root, _, files in os.walk(folder_path):
-        for file in files:
-            if not file.lower().endswith(VIDEO_EXTENSIONS):
-                continue
-            if is_trailer(file):
-                continue
-            total_files += 1
-    
-    log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path} [{total_files} films au total]")
     
     stats = {
         "total": 0,
@@ -365,11 +457,12 @@ def process_folder(folder_path, folder_index, total_folders):
         "external_found": 0,
         "already_extracted": 0,
         "mkv_extracted": 0,
+        "no_subtitle_in_mkv": 0,
+        "mkv_analysis_error": 0,
+        "mkv_extraction_error": 0,
         "failed": 0,
         "no_source": 0
     }
-    
-    current_index = 0
     
     for root, _, files in os.walk(folder_path):
         for file in files:
@@ -382,12 +475,11 @@ def process_folder(folder_path, folder_index, total_folders):
                 stats["trailers_skipped"] += 1
                 continue
             
-            current_index += 1
             video_path = os.path.join(root, file)
             
             try:
-                result = process_video_file(video_path, current_index, total_files)
-                
+                result = process_video_file(video_path)
+
                 if result == "french_external":
                     stats["french_external"] += 1
                 elif result == "french_in_mkv":
@@ -398,15 +490,20 @@ def process_folder(folder_path, folder_index, total_folders):
                     stats["already_extracted"] += 1
                 elif result == "mkv_extracted":
                     stats["mkv_extracted"] += 1
+                elif result == "no_subtitle_in_mkv":
+                    stats["no_subtitle_in_mkv"] += 1
+                elif result == "mkv_analysis_error":
+                    stats["mkv_analysis_error"] += 1
+                elif result == "mkv_extraction_error":
+                    stats["mkv_extraction_error"] += 1
                 elif result == "failed":
                     stats["failed"] += 1
                 elif result == "no_source":
                     stats["no_source"] += 1
-                
+
                 stats["total"] += 1
             except Exception as e:
-                percentage = (current_index / total_files * 100) if total_files > 0 else 0
-                log(f"❌ [{current_index}/{total_files} - {percentage:.2f}%] {file} | Erreur inattendue: {e}")
+                log(f"❌ {file} | Erreur inattendue: {e}")
                 stats["failed"] += 1
                 stats["total"] += 1
     
@@ -425,16 +522,12 @@ def merge_stats(global_stats, folder_stats):
 def run_extraction():
     """Exécution d'un cycle d'extraction complet sur tous les folders"""
     if not SOURCE_FOLDERS:
-        log("❌ Aucun dossier configuré")
-        log("   Configuration multi-folders : SOURCE_FOLDERS=[\"/path/1\", \"/path/2\"]")
-        log("   OU configuration legacy : SOURCE_FOLDER=/path")
-        log(f"   Debug: SOURCE_FOLDERS_JSON='{SOURCE_FOLDERS_JSON}'")
-        log(f"   Debug: SOURCE_FOLDER_LEGACY='{SOURCE_FOLDER_LEGACY}'")
-        log(f"   Debug: Parsed SOURCE_FOLDERS={SOURCE_FOLDERS}")
+        log("❌ Aucun dossier configuré (SOURCE_FOLDERS vide)")
+        log("   Configurez SOURCE_FOLDERS dans .env : SOURCE_FOLDERS=[\"/path/1\", \"/path/2\"]")
         return
     
     log("🚀 DÉBUT DE L'EXTRACTION")
-    log(f"📂 {len(SOURCE_FOLDERS)} dossier(s) configuré(s) | Formats: {', '.join(VIDEO_EXTENSIONS)}")
+    log(f"📂 {len(SOURCE_FOLDERS)} dossier(s) configuré(s) | Formats: {', '.join(VIDEO_EXTENSIONS)} | Ignore: trailers")
     
     # Stats globales
     global_stats = {
@@ -445,6 +538,9 @@ def run_extraction():
         "external_found": 0,
         "already_extracted": 0,
         "mkv_extracted": 0,
+        "no_subtitle_in_mkv": 0,
+        "mkv_analysis_error": 0,
+        "mkv_extraction_error": 0,
         "failed": 0,
         "no_source": 0
     }
@@ -457,13 +553,29 @@ def run_extraction():
     
     # Stats compactes globales
     french_total = global_stats["french_external"] + global_stats["french_in_mkv"]
-    skipped = french_total + global_stats["external_found"] + global_stats["already_extracted"]
-    
-    log(f"✅ EXTRACTION TERMINÉE | Total: {global_stats['total']} | Extraits: {global_stats['mkv_extracted']} | Skippés: {skipped} | Erreurs: {global_stats['failed'] + global_stats['no_source']}")
+    skipped = (global_stats["trailers_skipped"] + french_total +
+               global_stats["external_found"] + global_stats["already_extracted"] +
+               global_stats["no_subtitle_in_mkv"])
+
+    errors_total = (global_stats["failed"] + global_stats["no_source"] +
+                   global_stats["mkv_analysis_error"] + global_stats["mkv_extraction_error"])
+
+    log(f"✅ EXTRACTION TERMINÉE | Total: {global_stats['total']} | Extraits: {global_stats['mkv_extracted']} | Skippés: {skipped} | Erreurs: {errors_total}")
+
+    # Détail des erreurs si présentes
+    if global_stats["no_subtitle_in_mkv"] > 0:
+        log(f"  ⏭️ Pas de piste EN dans MKV : {global_stats['no_subtitle_in_mkv']}")
+    if global_stats["mkv_analysis_error"] > 0:
+        log(f"  ⚠️ Erreur analyse MKV (timeout/corrompu) : {global_stats['mkv_analysis_error']}")
+    if global_stats["mkv_extraction_error"] > 0:
+        log(f"  ⚠️ Erreur extraction MKV (timeout/échec) : {global_stats['mkv_extraction_error']}")
     if global_stats["failed"] > 0:
-        log(f"  ❌ MKV sans piste EN : {global_stats['failed']}")
+        log(f"  ❌ Extraction échouée : {global_stats['failed']}")
     if global_stats["no_source"] > 0:
-        log(f"  ⚠️ Non-MKV sans source externe : {global_stats['no_source']}")
+        log(f"  ⚠️ Aucune source trouvée : {global_stats['no_source']}")
+    if global_stats["trailers_skipped"] > 0:
+        log(f"  🚫 Trailers ignorés : {global_stats['trailers_skipped']}")
+
     log('='*60)
 
 

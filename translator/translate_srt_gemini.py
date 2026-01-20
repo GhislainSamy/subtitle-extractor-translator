@@ -53,6 +53,7 @@ except json.JSONDecodeError:
 DELETE_PROGRESS_AFTER = os.getenv("DELETE_PROGRESS_AFTER", "false").lower() == "true"
 DELETE_SOURCE_AFTER = os.getenv("DELETE_SOURCE_AFTER", "false").lower() == "true"
 DELETE_CONVERTED_AFTER = os.getenv("DELETE_CONVERTED_AFTER", "false").lower() == "true"
+DELETE_NO_SUBTITLE_MARKER = os.getenv("DELETE_NO_SUBTITLE_MARKER", "false").lower() == "true"
 
 API_KEYS = json.loads(os.getenv("GEMINI_API_KEYS") or "[]")
 MODELS = json.loads(os.getenv("GEMINI_MODELS") or "[]")
@@ -80,12 +81,6 @@ def setup_logger():
     
     logger = logging.getLogger('subtitle_translator')
     logger.setLevel(logging.INFO)
-    
-    # IMPORTANT: Vider les handlers existants pour éviter les doublons
-    logger.handlers.clear()
-    
-    # IMPORTANT: Désactiver la propagation vers le logger racine
-    logger.propagate = False
     
     # Format du log
     formatter = logging.Formatter('[%(asctime)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -121,6 +116,8 @@ def setup_logger():
 
 def log(msg):
     """Logger avec timestamp et rotation automatique"""
+    if logger is None:
+        setup_logger()
     logger.info(msg)
 
 
@@ -396,15 +393,23 @@ def delete_progress(path):
 
 def delete_extracted_subtitle(base_path):
     """Supprime les fichiers .en.XXX.tmp (fichiers extraits du MKV) si DELETE_SOURCE_AFTER=true"""
-    if not DELETE_SOURCE_AFTER:
-        return False
-    
-    for ext in SUBTITLE_EXTENSIONS:
-        extracted_file = f"{base_path}.en.{ext}.tmp"
-        if os.path.isfile(extracted_file):
-            os.remove(extracted_file)
-            return True
-    return False
+    deleted = False
+
+    if DELETE_SOURCE_AFTER:
+        for ext in SUBTITLE_EXTENSIONS:
+            extracted_file = f"{base_path}.en.{ext}.tmp"
+            if os.path.isfile(extracted_file):
+                os.remove(extracted_file)
+                deleted = True
+
+    # Supprimer le fichier marqueur .en.nosubtitle.tmp si DELETE_NO_SUBTITLE_MARKER=true
+    if DELETE_NO_SUBTITLE_MARKER:
+        marker_file = f"{base_path}.en.nosubtitle.tmp"
+        if os.path.isfile(marker_file):
+            os.remove(marker_file)
+            deleted = True
+
+    return deleted
 
 
 # =========================
@@ -438,23 +443,17 @@ def find_english_subtitle(base_path):
 # =========================
 # MAIN TRANSLATION
 # =========================
-def translate_subtitle(video_path, file_index=0, total_files=0):
+def translate_subtitle(video_path):
     """Traduit un fichier de sous-titre"""
     base, _ = os.path.splitext(video_path)
     video_name = os.path.basename(video_path)
     output_path = f"{base}.fr.srt"
     progress_path = f"{base}.fr.progress.json"
     
-    # Calculer le pourcentage de progression dans le dossier
-    folder_progress = ""
-    if file_index > 0 and total_files > 0:
-        percentage = (file_index / total_files) * 100
-        folder_progress = f"[{file_index}/{total_files} - {percentage:.2f}%] "
-    
     # 1. Vérifier si .fr.srt existe
     if os.path.isfile(output_path):
         if not os.path.exists(progress_path):
-            log(f"⏭️ {folder_progress}{video_name} | Déjà traduit (Film.fr.srt existe)")
+            log(f"⏭️ {video_name} | Déjà traduit (Film.fr.srt existe)")
             return "already_done"
         
         try:
@@ -463,33 +462,33 @@ def translate_subtitle(video_path, file_index=0, total_files=0):
             last_index = load_progress(progress_path)
             
             if last_index >= total_lines:
-                log(f"⏭️ {folder_progress}{video_name} | Traduction complète ({last_index}/{total_lines})")
+                log(f"⏭️ {video_name} | Traduction complète ({last_index}/{total_lines})")
                 delete_progress(progress_path)
                 delete_extracted_subtitle(base)
                 cleanup_converted_files(base)
                 return "already_done"
         except Exception as e:
-            log(f"⚠️ {folder_progress}{video_name} | Erreur vérification progress: {e}")
+            log(f"⚠️ {video_name} | Erreur vérification progress: {e}")
     
     # 2. Chercher fichier source anglais
     source_file = find_english_subtitle(base)
     
     if not source_file:
-        log(f"⚠️ {folder_progress}{video_name} | Rien à traiter")
+        log(f"❌ {video_name} | Aucune source anglaise trouvée")
         return "no_source"
     
     # 3. Convertir en SRT si nécessaire
     srt_file, needs_cleanup = convert_to_srt_if_needed(source_file)
     
     if not srt_file:
-        log(f"⚠️ {folder_progress}{video_name} | Format bitmap (SUP/SUB) non supporté sans OCR")
+        log(f"❌ {video_name} | Format bitmap (image) non traduisible sans OCR")
         return "unsupported_format"
     
     # 4. Charger le fichier SRT
     try:
         subs = pysrt.open(srt_file, encoding="utf-8")
     except Exception as e:
-        log(f"❌ {folder_progress}{video_name} | Erreur lecture source: {e}")
+        log(f"❌ {video_name} | Erreur lecture source: {e}")
         return "error"
     
     total = len(subs)
@@ -507,9 +506,9 @@ def translate_subtitle(video_path, file_index=0, total_files=0):
         conversion_info = " | Converting ASS→SRT"
     
     if last_done > 0:
-        log(f"🎬 {folder_progress}{video_name} | Source: {source_name} ({total} lignes) | Reprise à {last_done + 1}{conversion_info}")
+        log(f"🎬 {video_name} | Source: {source_name} ({total} lignes) | Reprise à {last_done + 1}{conversion_info}")
     else:
-        log(f"🎬 {folder_progress}{video_name} | Source: {source_name} ({total} lignes){conversion_info}")
+        log(f"🎬 {video_name} | Source: {source_name} ({total} lignes){conversion_info}")
     
     # 5. Suivi du temps pour estimation
     batch_times = []
@@ -569,10 +568,10 @@ def translate_subtitle(video_path, file_index=0, total_files=0):
             end_time = datetime.now(PARIS_TZ) + timedelta(seconds=estimated_seconds)
             end_time_str = end_time.strftime("%H:%M")
             
-            log(f"⏳ {folder_progress}{video_name} | {i+1}-{current_index}/{total} ({percent:.1f}%) | ETA: ~{time_str} (fin: {end_time_str})")
+            log(f"⏳ {video_name} | {i+1}-{current_index}/{total} ({percent:.1f}%) | ETA: ~{time_str} (fin: {end_time_str})")
         else:
             # Dernier batch
-            log(f"⏳ {folder_progress}{video_name} | {i+1}-{current_index}/{total} ({percent:.1f}%)")
+            log(f"⏳ {video_name} | {i+1}-{current_index}/{total} ({percent:.1f}%)")
     
     # 7. Traduction terminée → nettoyage
     total_duration = time.time() - start_time
@@ -591,7 +590,7 @@ def translate_subtitle(video_path, file_index=0, total_files=0):
     delete_extracted_subtitle(base)
     cleanup_converted_files(base)
     
-    log(f"✅ {folder_progress}{video_name} | Terminé en {duration_str} | Output: {os.path.basename(output_path)}")
+    log(f"✅ {video_name} | Terminé en {duration_str} | Output: {os.path.basename(output_path)}")
     
     return "completed"
 
@@ -603,22 +602,11 @@ def process_folder(folder_path, folder_index, total_folders):
     """
     Traite un dossier spécifique et retourne les stats
     """
+    log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path}")
+    
     if not os.path.isdir(folder_path):
-        log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path}")
         log(f"  ⚠️ Dossier inexistant, ignoré")
         return None
-    
-    # Compter le nombre total de fichiers vidéo (sans trailers)
-    total_files = 0
-    for root, _, files in os.walk(folder_path):
-        for file in files:
-            if not file.lower().endswith(VIDEO_EXTENSIONS):
-                continue
-            if "-trailer" in file.lower():
-                continue
-            total_files += 1
-    
-    log(f"📂 [{folder_index}/{total_folders}] Traitement: {folder_path} [{total_files} films au total]")
     
     stats = {
         "total": 0,
@@ -630,8 +618,6 @@ def process_folder(folder_path, folder_index, total_folders):
         "error": 0
     }
     
-    current_index = 0
-    
     for root, _, files in os.walk(folder_path):
         for file in files:
             if not file.lower().endswith(VIDEO_EXTENSIONS):
@@ -642,19 +628,17 @@ def process_folder(folder_path, folder_index, total_folders):
                 stats["trailers_skipped"] += 1
                 continue
             
-            current_index += 1
             video_path = os.path.join(root, file)
             
             try:
-                result = translate_subtitle(video_path, current_index, total_files)
+                result = translate_subtitle(video_path)
                 
                 if result in stats:
                     stats[result] += 1
                 
                 stats["total"] += 1
             except Exception as e:
-                percentage = (current_index / total_files * 100) if total_files > 0 else 0
-                log(f"❌ [{current_index}/{total_files} - {percentage:.2f}%] {file} | Erreur inattendue: {e}")
+                log(f"❌ {file} | Erreur inattendue: {e}")
                 stats["error"] += 1
                 stats["total"] += 1
     
@@ -700,26 +684,7 @@ def run_translation():
         folder_stats = process_folder(folder, index, total_folders)
         merge_stats(global_stats, folder_stats)
     
-    # Calculer warnings et erreurs
-    warnings = global_stats['no_source'] + global_stats['unsupported_format']
-    errors = global_stats['error']
-    
-    # Log principal
-    log(f"✅ TRADUCTION TERMINÉE | Total: {global_stats['total']} | Complétés: {global_stats['completed']} | Déjà faits: {global_stats['already_done']} | Warnings: {warnings} | Erreurs: {errors}")
-    
-    # Détails warnings (si > 0)
-    if warnings > 0:
-        log(f"  ⚠️ Warnings :")
-        if global_stats['no_source'] > 0:
-            log(f"    - Rien à traiter : {global_stats['no_source']}")
-        if global_stats['unsupported_format'] > 0:
-            log(f"    - Format non supporté (SUP/SUB) : {global_stats['unsupported_format']}")
-    
-    # Détails erreurs (si > 0)
-    if errors > 0:
-        log(f"  ❌ Erreurs :")
-        log(f"    - Erreurs de traduction : {errors}")
-    
+    log(f"✅ TRADUCTION TERMINÉE | Total: {global_stats['total']} | Complétés: {global_stats['completed']} | Déjà faits: {global_stats['already_done']} | Erreurs: {global_stats['error'] + global_stats['no_source'] + global_stats['unsupported_format']}")
     log('='*60)
 
 
@@ -727,9 +692,6 @@ def run_translation():
 # MAIN
 # =========================
 def main():
-    # Initialiser le logger UNE SEULE FOIS au démarrage
-    setup_logger()
-    
     mode = "WATCH (agent continu)" if WATCH_MODE else "RUN ONCE (exécution unique)"
     log(f"🐳 Mode: {mode}")
     
