@@ -26,4 +26,4 @@ ENV WATCH_INTERVAL=3600
 ENV SOURCE_FOLDER=/data
 
 # Lancer le script
-CMD ["python", "-u", "extract_subtitle_en.py"]
+CMD ["python", "-u", "extract_subtitle.py"]
