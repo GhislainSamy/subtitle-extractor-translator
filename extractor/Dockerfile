@@ -18,7 +18,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copier le script
-COPY extract_subtitle_en.py .
+COPY extract_subtitle.py .
 
 # Variables d'environnement par défaut
 ENV WATCH_MODE=true
